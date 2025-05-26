@@ -9,23 +9,19 @@ class TestExasol(Validator):
 
     def test_integration_identity(self):
         ########## STRING FUNCTIONS ###########
-   
+
         self.validate_identity("SELECT BIT_LENGTH('aou') BIT_LENGTH")
         self.validate_identity(
             "SELECT CHARACTER_LENGTH('aeiouäöü') C_LENGTH",
             "SELECT LENGTH('aeiouäöü') C_LENGTH",
         )
         self.validate_identity("SELECT CHAR(88) CHR", "SELECT CHR(88) CHR")
-        self.validate_identity(
-            "SELECT COLOGNE_PHONETIC('schmitt'), COLOGNE_PHONETIC('Schmidt')"
-        )
+        self.validate_identity("SELECT COLOGNE_PHONETIC('schmitt'), COLOGNE_PHONETIC('Schmidt')")
         self.validate_identity("SELECT CONCAT('abc', 'def', 'g') CONCAT")
 
         self.validate_identity("SELECT EDIT_DISTANCE('schmitt', 'Schmidt')")
         self.validate_identity("SELECT INITCAP('ExAsOl is great')")
-        self.validate_identity(
-            "SELECT INSERT('abc', 2, 2, 'xxx'), INSERT('abcdef', 3, 2, 'CD')"
-        )
+        self.validate_identity("SELECT INSERT('abc', 2, 2, 'xxx'), INSERT('abcdef', 3, 2, 'CD')")
 
         instrs = [
             (
@@ -54,9 +50,7 @@ class TestExasol(Validator):
 
         self.validate_identity("SELECT LOCATE('cab', 'abcabcabc', -1) LOC")
         self.validate_identity("SELECT POSITION('cab' IN 'abcabcabc') POS")
-        self.validate_identity(
-            "SELECT LCASE('AbCdEf') LCASE", "SELECT LOWER('AbCdEf') LCASE"
-        )
+        self.validate_identity("SELECT LCASE('AbCdEf') LCASE", "SELECT LOWER('AbCdEf') LCASE")
         self.validate_identity("SELECT LOWER('AbCdEf') LCASE")
         self.validate_identity("SELECT LEFT('abcdef', 3) LEFT_SUBSTR")
         self.validate_identity("SELECT LENGTH('abc') LENGTH")
@@ -65,7 +59,7 @@ class TestExasol(Validator):
         self.validate_identity(
             "SELECT MID('abcdef', 2, 3) S1, MID('abcdef', -3) S2, MID('abcdef', 7) S3, MID('abcdef', -7) S4"
         )
-     
+
         self.validate_identity(
             r"SELECT REGEXP_REPLACE('From: my_mail@yahoo.com', '(?i)^From: ([a-z0-9._%+-]+)@([a-z0-9.-]+\.[a-z]{2,4}$)', 'Name: \1 - Domain: \2') REGEXP_REPLACE"
         )
@@ -86,9 +80,7 @@ class TestExasol(Validator):
             "SELECT SUBSTR('abcdef', 2, 3) S1, SUBSTR('abcdef', 4, 2) S2, SUBSTR('abcdef', -3) S3, SUBSTR('abcdef', 7) S4",
         )
         self.validate_identity("SELECT UPPER('AbCdEf') UPPER")
-        self.validate_identity(
-            "SELECT UCASE('bCdEf') UCASE", "SELECT UPPER('bCdEf') UCASE"
-        )
+        self.validate_identity("SELECT UCASE('bCdEf') UCASE", "SELECT UPPER('bCdEf') UCASE")
 
         self.validate_all(
             "SELECT LENGTH('aeiouäöü') C_LENGTH",
@@ -223,5 +215,3 @@ class TestExasol(Validator):
                 "spark": "SELECT INITCAP('ExAsOl is great')",
             },
         )
-
-

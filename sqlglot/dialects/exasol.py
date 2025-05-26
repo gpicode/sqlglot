@@ -1,6 +1,6 @@
 from __future__ import annotations
 import typing as t
-from sqlglot import exp, generator, parser, tokens, parse_one
+from sqlglot import exp, generator, parser, tokens
 from sqlglot.dialects.dialect import (
     Dialect,
     binary_from_function,
@@ -11,11 +11,7 @@ from sqlglot.helper import seq_get
 from sqlglot.tokens import TokenType
 from sqlglot.generator import unsupported_args
 
-DATEΤΙΜΕ_DELTA = t.Union[
-    exp.DateAdd, exp.DateDiff, exp.DateSub, exp.TimestampSub, exp.TimestampAdd
-]
-
-
+DATEΤΙΜΕ_DELTA = t.Union[exp.DateAdd, exp.DateDiff, exp.DateSub, exp.TimestampSub, exp.TimestampAdd]
 
 
 class Tokenizer(tokens.Tokenizer):
@@ -29,9 +25,6 @@ class Tokenizer(tokens.Tokenizer):
         "TO": TokenType.COMMAND,
         "HASHTYPE": TokenType.UUID,
     }
-
-
-
 
 
 def _string_position_sql(self: Exasol.Generator, expression: exp.StrPosition) -> str:
@@ -69,7 +62,6 @@ def _string_position_sql(self: Exasol.Generator, expression: exp.StrPosition) ->
 
     # Full INSTR
     return self.func("INSTR", this, substr, position, occurrence)
-
 
 
 class Exasol(Dialect):
@@ -133,7 +125,7 @@ class Exasol(Dialect):
         SINGLE_TOKENS = {
             **tokens.Tokenizer.SINGLE_TOKENS,
         }
-        SINGLE_TOKENS.pop("%") 
+        SINGLE_TOKENS.pop("%")
         KEYWORDS = {
             **tokens.Tokenizer.KEYWORDS,
         }
@@ -149,9 +141,7 @@ class Exasol(Dialect):
 
         NUMERIC_FUNCTIONS = {
             "DIV": binary_from_function(exp.IntDiv),
-            "RANDOM": lambda args: exp.Rand(
-                lower=seq_get(args, 0), upper=seq_get(args, 1)
-            ),
+            "RANDOM": lambda args: exp.Rand(lower=seq_get(args, 0), upper=seq_get(args, 1)),
         }
 
         STRING_FUNCTIONS = {
@@ -166,7 +156,6 @@ class Exasol(Dialect):
             **DATE_ADD_FUNCTIONS,
             **NUMERIC_FUNCTIONS,
             **STRING_FUNCTIONS,
-        
         }
 
         FUNCTION_PARSERS = {
@@ -175,7 +164,7 @@ class Exasol(Dialect):
                 exp.Chr,
                 expressions=self._parse_csv(self._parse_assignment),
                 charset=self._match(TokenType.USING) and self._parse_var(),
-            )
+            ),
         }
 
         CONSTRAINT_PARSERS = {
@@ -187,7 +176,7 @@ class Exasol(Dialect):
                 exp.CharacterSetColumnConstraint, this=exp.Var(this="ASCII")
             ),
         }
-        STRING_ALIASES = True  
+        STRING_ALIASES = True
         MODIFIERS_ATTACHED_TO_SET_OP = False  # default True
         SET_OP_MODIFIERS = {"order", "limit", "offset"}
         OPTIONAL_ALIAS_TOKEN_CTE = False
@@ -281,9 +270,9 @@ class Exasol(Dialect):
             exp.Anonymous: lambda self, e: self.anonymous_func(e),
             exp.Unicode: lambda self, e: self.unicode_sql(e),
             exp.GroupConcat: lambda self, e: self.group_concat_sql(e),
-            exp.Levenshtein: unsupported_args(
-                "ins_cost", "del_cost", "sub_cost", "max_dist"
-            )(rename_func("EDIT_DISTANCE")),
+            exp.Levenshtein: unsupported_args("ins_cost", "del_cost", "sub_cost", "max_dist")(
+                rename_func("EDIT_DISTANCE")
+            ),
             exp.StrPosition: _string_position_sql,
             exp.RegexpExtract: rename_func("REGEXP_SUBSTR"),
             exp.RegexpReplace: rename_func("REGEXP_REPLACE"),
@@ -292,7 +281,6 @@ class Exasol(Dialect):
             exp.ToChar: lambda self, e: self.to_char_sql(e),
             exp.ToNumber: lambda self, e: self.tonumber_sql(e),
             exp.Upper: lambda self, e: f"{e.args.get('sql_name', 'UPPER')}({self.sql(e.this)})",
-
         }
 
         PROPERTIES_LOCATION = {
@@ -306,30 +294,16 @@ class Exasol(Dialect):
         def anonymous_func(self, e):
             func_name = e.this.upper()
             handlers = {
-                "COLOGNE_PHONETIC": lambda e: self.render_func_with_args(
-                    e, expected_arg_count=1
-                ),
-                "OCTET_LENGTH": lambda e: self.render_func_with_args(
-                    e, expected_arg_count=1
-                ),
+                "COLOGNE_PHONETIC": lambda e: self.render_func_with_args(e, expected_arg_count=1),
+                "OCTET_LENGTH": lambda e: self.render_func_with_args(e, expected_arg_count=1),
                 "REGEXP_INSTR": lambda e: self.render_func_with_args(
                     e, min_arg_count=2, max_arg_count=5
                 ),
-                "REPLACE": lambda e: self.render_func_with_args(
-                    e, expected_arg_count=3
-                ),
-                "REVERSE": lambda e: self.render_func_with_args(
-                    e, expected_arg_count=3
-                ),
-                "SOUNDEX": lambda e: self.render_func_with_args(
-                    e, expected_arg_count=1
-                ),
+                "REPLACE": lambda e: self.render_func_with_args(e, expected_arg_count=3),
+                "REVERSE": lambda e: self.render_func_with_args(e, expected_arg_count=3),
+                "SOUNDEX": lambda e: self.render_func_with_args(e, expected_arg_count=1),
                 "SPACE": lambda e: self.render_func_with_args(e, expected_arg_count=1),
-                "TRANSLATE": lambda e: self.render_func_with_args(
-                    e, expected_arg_count=3
-                ),
-
-               
+                "TRANSLATE": lambda e: self.render_func_with_args(e, expected_arg_count=3),
             }
 
             if func_name in handlers:
@@ -360,10 +334,7 @@ class Exasol(Dialect):
                 if (
                     isinstance(arg, exp.Literal)
                     and isinstance(arg.this, str)
-                    and (
-                        arg.this.startswith("TIMESTAMP ")
-                        or arg.this.startswith("DATE ")
-                    )
+                    and (arg.this.startswith("TIMESTAMP ") or arg.this.startswith("DATE "))
                 ):
                     return arg.this
                 return self.sql(arg)
@@ -398,10 +369,7 @@ class Exasol(Dialect):
                 if (
                     isinstance(arg, exp.Literal)
                     and isinstance(arg.this, str)
-                    and (
-                        arg.this.startswith("TIMESTAMP ")
-                        or arg.this.startswith("DATE ")
-                    )
+                    and (arg.this.startswith("TIMESTAMP ") or arg.this.startswith("DATE "))
                 ):
                     return arg.this
                 return self.sql(arg)
@@ -421,14 +389,11 @@ class Exasol(Dialect):
                 args.append(self.sql(e, "options"))
             return f"CONVERT_TZ({', '.join(args)})"
 
-
         def tonumber_sql(self, expression):
             return f"TO_NUMBER({', '.join(self.sql(arg) for arg in expression.expressions)})"
 
         def unicode_sql(self, expression):
-            func_name = (
-                expression.args.get("sql_name") or expression.__class__._sql_names[0]
-            )
+            func_name = expression.args.get("sql_name") or expression.__class__._sql_names[0]
             return f"{func_name}({self.sql(expression, 'this')})"
 
         def group_concat_sql(self, e):
@@ -443,11 +408,7 @@ class Exasol(Dialect):
                 + ("DISTINCT " if e.args.get("distinct") else "")
                 + self.sql(e, "this")
                 + order_sql
-                + (
-                    f" SEPARATOR {self.sql(e, 'separator')}"
-                    if e.args.get("separator")
-                    else ""
-                )
+                + (f" SEPARATOR {self.sql(e, 'separator')}" if e.args.get("separator") else "")
                 + ")"
                 + self.sql(e, "over")
             )

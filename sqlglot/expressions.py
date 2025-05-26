@@ -7003,9 +7003,10 @@ class NextValueFor(Func):
     arg_types = {"this": True, "order": False}
 
 
-
 class MinScale(Func):
     arg_types = {"this": True}
+
+
 # Refers to a trailing semi-colon. This is only used to preserve trailing comments
 # select 1; -- my comment
 class Semicolon(Expression):
