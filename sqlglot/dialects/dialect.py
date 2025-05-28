@@ -12,7 +12,15 @@ from sqlglot import exp
 from sqlglot.dialects import DIALECT_MODULE_NAMES
 from sqlglot.errors import ParseError
 from sqlglot.generator import Generator, unsupported_args
-from sqlglot.helper import AutoName, flatten, is_int, seq_get, subclasses, to_bool
+from sqlglot.helper import (
+    AutoName,
+    flatten,
+    is_int,
+    seq_get,
+    subclasses,
+    suggest_closest_match_and_fail,
+    to_bool,
+)
 from sqlglot.jsonpath import JSONPathTokenizer, parse as parse_json_path
 from sqlglot.parser import Parser
 from sqlglot.time import TIMEZONES, format_time, subsecond_precision
@@ -240,7 +248,7 @@ class _Dialect(type):
         if enum not in ("", "bigquery"):
             klass.generator_class.SELECT_KINDS = ()
 
-        if enum not in ("", "athena", "presto", "trino"):
+        if enum not in ("", "athena", "presto", "trino", "duckdb"):
             klass.generator_class.TRY_SUPPORTED = False
             klass.generator_class.SUPPORTS_UESCAPE = False
 
@@ -709,6 +717,7 @@ class Dialect(metaclass=_Dialect):
             exp.Concat,
             exp.ConcatWs,
             exp.DateToDateStr,
+            exp.DPipe,
             exp.GroupConcat,
             exp.Initcap,
             exp.Lower,
@@ -780,6 +789,7 @@ class Dialect(metaclass=_Dialect):
         exp.Slice: lambda self, e: self._annotate_with_type(e, exp.DataType.Type.UNKNOWN),
         exp.Struct: lambda self, e: self._annotate_struct(e),
         exp.Sum: lambda self, e: self._annotate_by_args(e, "this", "expressions", promote=True),
+        exp.SortArray: lambda self, e: self._annotate_by_args(e, "this"),
         exp.Timestamp: lambda self, e: self._annotate_with_type(
             e,
             exp.DataType.Type.TIMESTAMPTZ if e.args.get("with_tz") else exp.DataType.Type.TIMESTAMP,
@@ -788,6 +798,15 @@ class Dialect(metaclass=_Dialect):
         exp.TryCast: lambda self, e: self._annotate_with_type(e, e.args["to"]),
         exp.Unnest: lambda self, e: self._annotate_unnest(e),
         exp.VarMap: lambda self, e: self._annotate_map(e),
+    }
+
+    # Specifies what types a given type can be coerced into
+    COERCES_TO: t.Dict[exp.DataType.Type, t.Set[exp.DataType.Type]] = {}
+
+    # Determines the supported Dialect instance settings
+    SUPPORTED_SETTINGS = {
+        "normalization_strategy",
+        "version",
     }
 
     @classmethod
@@ -839,16 +858,9 @@ class Dialect(metaclass=_Dialect):
 
             result = cls.get(dialect_name.strip())
             if not result:
-                from difflib import get_close_matches
+                suggest_closest_match_and_fail("dialect", dialect_name, list(DIALECT_MODULE_NAMES))
 
-                close_matches = get_close_matches(dialect_name, list(DIALECT_MODULE_NAMES), n=1)
-
-                similar = seq_get(close_matches, 0) or ""
-                if similar:
-                    similar = f" Did you mean {similar}?"
-
-                raise ValueError(f"Unknown dialect '{dialect_name}'.{similar}")
-
+            assert result is not None
             return result(**kwargs)
 
         raise ValueError(f"Invalid dialect type for '{dialect}': '{type(dialect)}'.")
@@ -870,14 +882,18 @@ class Dialect(metaclass=_Dialect):
         return expression
 
     def __init__(self, **kwargs) -> None:
-        normalization_strategy = kwargs.pop("normalization_strategy", None)
+        self.version = Version(kwargs.pop("version", None))
 
+        normalization_strategy = kwargs.pop("normalization_strategy", None)
         if normalization_strategy is None:
             self.normalization_strategy = self.NORMALIZATION_STRATEGY
         else:
             self.normalization_strategy = NormalizationStrategy(normalization_strategy.upper())
 
         self.settings = kwargs
+
+        for unsupported_setting in kwargs.keys() - self.SUPPORTED_SETTINGS:
+            suggest_closest_match_and_fail("setting", unsupported_setting, self.SUPPORTED_SETTINGS)
 
     def __eq__(self, other: t.Any) -> bool:
         # Does not currently take dialect state into account
@@ -1021,10 +1037,6 @@ class Dialect(metaclass=_Dialect):
 
     def generator(self, **opts) -> Generator:
         return self.generator_class(dialect=self, **opts)
-
-    @property
-    def version(self) -> Version:
-        return Version(self.settings.get("version", None))
 
     def generate_values_aliases(self, expression: exp.Values) -> t.List[exp.Identifier]:
         return [
@@ -1239,15 +1251,20 @@ def build_date_delta(
     exp_class: t.Type[E],
     unit_mapping: t.Optional[t.Dict[str, str]] = None,
     default_unit: t.Optional[str] = "DAY",
+    supports_timezone: bool = False,
 ) -> t.Callable[[t.List], E]:
     def _builder(args: t.List) -> E:
-        unit_based = len(args) == 3
+        unit_based = len(args) >= 3
+        has_timezone = len(args) == 4
         this = args[2] if unit_based else seq_get(args, 0)
         unit = None
         if unit_based or default_unit:
             unit = args[0] if unit_based else exp.Literal.string(default_unit)
             unit = exp.var(unit_mapping.get(unit.name.lower(), unit.name)) if unit_mapping else unit
-        return exp_class(this=this, expression=seq_get(args, 1), unit=unit)
+        expression = exp_class(this=this, expression=seq_get(args, 1), unit=unit)
+        if supports_timezone and has_timezone:
+            expression.set("zone", args[-1])
+        return expression
 
     return _builder
 

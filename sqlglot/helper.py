@@ -9,6 +9,7 @@ import typing as t
 from collections.abc import Collection, Set
 from contextlib import contextmanager
 from copy import copy
+from difflib import get_close_matches
 from enum import Enum
 from itertools import count
 
@@ -43,6 +44,20 @@ class classproperty(property):
 
     def __get__(self, obj: t.Any, owner: t.Any = None) -> t.Any:
         return classmethod(self.fget).__get__(None, owner)()  # type: ignore
+
+
+def suggest_closest_match_and_fail(
+    kind: str,
+    word: str,
+    possibilities: t.Iterable[str],
+) -> None:
+    close_matches = get_close_matches(word, possibilities, n=1)
+
+    similar = seq_get(close_matches, 0) or ""
+    if similar:
+        similar = f" Did you mean {similar}?"
+
+    raise ValueError(f"Unknown {kind} '{word}'.{similar}")
 
 
 def seq_get(seq: t.Sequence[T], index: int) -> t.Optional[T]:
@@ -211,16 +226,31 @@ def while_changing(expression: Expression, func: t.Callable[[Expression], E]) ->
     Returns:
         The transformed expression.
     """
-    while True:
-        for n in reversed(tuple(expression.walk())):
-            n._hash = hash(n)
+    end_hash: t.Optional[int] = None
 
-        start = hash(expression)
+    while True:
+        # No need to walk the AST– we've already cached the hashes in the previous iteration
+        if end_hash is None:
+            for n in reversed(tuple(expression.walk())):
+                n._hash = hash(n)
+
+        start_hash = hash(expression)
         expression = func(expression)
 
-        for n in expression.walk():
+        expression_nodes = tuple(expression.walk())
+
+        # Uncache previous caches so we can recompute them
+        for n in reversed(expression_nodes):
             n._hash = None
-        if start == hash(expression):
+            n._hash = hash(n)
+
+        end_hash = hash(expression)
+
+        if start_hash == end_hash:
+            # ... and reset the hash so we don't risk it becoming out of date if a mutation happens
+            for n in expression_nodes:
+                n._hash = None
+
             break
 
     return expression
