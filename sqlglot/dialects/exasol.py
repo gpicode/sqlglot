@@ -420,6 +420,15 @@ class Exasol(Dialect):
             exp.Timestamp: lambda self, e: f"TIMESTAMP {self.sql(e, 'this')}",
             exp.Decode: lambda self,
             e: f"DECODE({', '.join(self.sql(arg) for arg in e.expressions)})",
+            exp.FromTimeZone: lambda self, e: self.func(
+                "CONVERT_TZ", e.this, e.args.get("zone"), "'UTC'"
+            ),
+            exp.AtTimeZone: lambda self, e: self.func(
+                "CONVERT_TZ",
+                e.this,
+                "'UTC'",
+                e.args.get("zone"),
+            ),
             exp.Levenshtein: unsupported_args("ins_cost", "del_cost", "sub_cost", "max_dist")(
                 rename_func("EDIT_DISTANCE")
             ),
@@ -590,30 +599,6 @@ class Exasol(Dialect):
             ]
             expression.set("constraints", filtered_constraints)
             return super().columndef_sql(expression, sep)
-
-        def attimezone_sql(self, expression: exp.AtTimeZone) -> str:
-            """
-            Exasol does not support `AT TIME ZONE` directly.
-            It also requires CONVERT_TZ input to be a string, not a raw TIMESTAMP.
-            So we wrap TIMESTAMP expressions with TO_CHAR(...) to produce valid SQL.
-            """
-            inner_expr = expression.this
-            zone_sql = self.sql(expression, "zone")
-
-            # Safely check if the cast is to TIMESTAMP
-            if (
-                isinstance(inner_expr, exp.Cast)
-                and (cast_to := inner_expr.args.get("to"))
-                and cast_to.is_type("TIMESTAMP")
-            ):
-                ts_sql = self.sql(inner_expr.this)
-                ts_char_sql = f"TO_CHAR({ts_sql})"
-                return f"CONVERT_TZ({ts_char_sql}, 'UTC', {zone_sql})"
-
-            # Fallback: apply TO_CHAR to ensure string input
-            ts_sql = self.sql(inner_expr)
-            ts_char_sql = f"TO_CHAR({ts_sql})"
-            return f"CONVERT_TZ({ts_char_sql}, 'UTC', {zone_sql})"
 
         def dateadd_sql(self, expression: exp.DateAdd) -> str:
             """
@@ -985,16 +970,6 @@ class Exasol(Dialect):
             formatted_args = [format_arg(arg) for arg in args]
 
             return f"TO_CHAR({', '.join(formatted_args)})"
-
-        def convert_tz(self, e):
-            args = [
-                self.sql(e, "this"),
-                self.sql(e, "timezone"),
-                self.sql(e, "to_timezone"),
-            ]
-            if e.args.get("options"):
-                args.append(self.sql(e, "options"))
-            return f"CONVERT_TZ({', '.join(args)})"
 
         def cos_sql(self, expression):
             return f"COS({self.sql(expression, 'this')})"
