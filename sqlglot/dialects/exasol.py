@@ -386,7 +386,6 @@ class Exasol(Dialect):
             **generator.Generator.TRANSFORMS,
             exp.Unicode: lambda self, e: self.unicode_sql(e),
             exp.Anonymous: lambda self, e: self._anonymous_func(e),
-            exp.AtTimeZone: lambda self, e: self._transform_at_time_zone(e),
             exp.Any: lambda self, e: self.windowed_func("ANY", e),
             exp.ApproxDistinct: unsupported_args("accuracy")(
                 rename_func("APPROXIMATE_COUNT_DISTINCT")
@@ -592,9 +591,29 @@ class Exasol(Dialect):
             expression.set("constraints", filtered_constraints)
             return super().columndef_sql(expression, sep)
 
-        def _transform_at_time_zone(self, expression):
-            # Strip AT TIME ZONE to just the base timestamp
-            return expression.this
+        def attimezone_sql(self, expression: exp.AtTimeZone) -> str:
+            """
+            Exasol does not support `AT TIME ZONE` directly.
+            It also requires CONVERT_TZ input to be a string, not a raw TIMESTAMP.
+            So we wrap TIMESTAMP expressions with TO_CHAR(...) to produce valid SQL.
+            """
+            inner_expr = expression.this
+            zone_sql = self.sql(expression, "zone")
+
+            # Safely check if the cast is to TIMESTAMP
+            if (
+                isinstance(inner_expr, exp.Cast)
+                and (cast_to := inner_expr.args.get("to"))
+                and cast_to.is_type("TIMESTAMP")
+            ):
+                ts_sql = self.sql(inner_expr.this)
+                ts_char_sql = f"TO_CHAR({ts_sql})"
+                return f"CONVERT_TZ({ts_char_sql}, 'UTC', {zone_sql})"
+
+            # Fallback: apply TO_CHAR to ensure string input
+            ts_sql = self.sql(inner_expr)
+            ts_char_sql = f"TO_CHAR({ts_sql})"
+            return f"CONVERT_TZ({ts_char_sql}, 'UTC', {zone_sql})"
 
         def dateadd_sql(self, expression: exp.DateAdd) -> str:
             """
@@ -635,65 +654,6 @@ class Exasol(Dialect):
                 return f"{this_sql} IS {self.sql(expression)}"
 
             return f"{this_sql} IS UNKNOWN"
-
-        # def _explode_split_sql(self, explode: exp.Explode) -> str:
-        #     """
-        #     Transforms EXPLODE(SPLIT/REGEXP_SPLIT(col, ',')) into Exasol-compatible SQL using REGEXP_SUBSTR + CONNECT BY.
-        #     """
-        #     split_expr = explode.this
-
-        #     # Accept both Split and RegexpSplit expressions
-        #     if not isinstance(split_expr, (exp.Split, exp.RegexpSplit)):
-        #         raise ValueError(
-        #             "Only SPLIT or REGEXP_SPLIT supported inside EXPLODE for Exasol transformation."
-        #         )
-
-        #     column_sql = self.sql(split_expr.this)
-        #     delimiter = self.sql(split_expr.expression) if split_expr.expression else "','"
-        #     pattern = "[^" + delimiter.strip("'") + "]+"  # default regex pattern
-
-        #     alias = explode.alias_or_name or "col"
-
-        #     return f"""(
-        #         SELECT REGEXP_SUBSTR({column_sql}, '{pattern}', 1, n.n) AS {alias}
-        #         FROM (SELECT LEVEL AS n FROM dual CONNECT BY LEVEL <= 100) n
-        #         WHERE REGEXP_SUBSTR({column_sql}, '{pattern}', 1, n.n) IS NOT NULL
-        #     )"""
-
-        # def lateral_sql(self, expression: exp.Lateral) -> str:
-        #     this = expression.this
-
-        #     # Only handle explode(split(...)) pattern
-        #     if isinstance(this, exp.Explode):
-        #         return self._explode_split_sql(this, expression.alias_or_name)
-
-        #     raise ValueError("Unsupported LATERAL construct for Exasol.")
-
-        # def _explode_split_sql(self, expression: exp.Explode, alias: str) -> str:
-        #     alias = alias or "col"
-        #     inner = expression.this
-
-        #     # Get the source column/expression SQL from SPLIT or REGEXP_SPLIT
-        #     if isinstance(inner, (exp.Split, exp.RegexpSplit)):
-        #         source_sql = self.sql(inner.this)
-        #     elif isinstance(inner, (exp.Anonymous, exp.Func)) and inner.name.upper() == "REGEXP_SPLIT":
-        #         source_sql = self.sql(inner.expressions[0])
-        #     else:
-        #         raise ValueError("Only SPLIT or REGEXP_SPLIT supported inside EXPLODE for Exasol transformation.")
-
-        #     # Prepare regexp extraction once
-        #     regexp_substr_expr = f"REGEXP_SUBSTR({source_sql}, '[^,]+', 1, n.n)"
-
-        #     # Generate the join SQL with sequence generator for exploding the string
-        #     return f"""
-        #     JOIN (
-        #         SELECT {regexp_substr_expr} AS {alias}
-        #         FROM (
-        #             SELECT LEVEL AS n FROM dual CONNECT BY LEVEL <= 100
-        #         ) n
-        #         WHERE {regexp_substr_expr} IS NOT NULL
-        #     ) {alias}
-        #     """
 
         def _anonymous_func(self, e):
             func_name = e.this.upper()
