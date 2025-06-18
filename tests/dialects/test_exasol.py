@@ -836,7 +836,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT id, department, COUNT(*) OVER (PARTITION BY department ORDER BY age) COUNT FROM "employee_table" ORDER BY department, age',
+                "SELECT id, department, COUNT(*) OVER (PARTITION BY department ORDER BY age) COUNT FROM employee_table ORDER BY department, age",
             ),
             (
                 exp.CovarPop(this=exp.Column(this="a"), expression=exp.Column(this="b")),
@@ -874,7 +874,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "current_salary", "age", COVAR_SAMP("age", "current_salary") OVER (PARTITION BY "department" ORDER BY "age") COVAR_SAMP FROM "employee_table" ORDER BY "department", "age"',
+                "SELECT id, department, current_salary, age, COVAR_SAMP(age, current_salary) OVER (PARTITION BY department ORDER BY age) COVAR_SAMP FROM employee_table ORDER BY department, age",
             ),
             (
                 exp.Select(
@@ -930,7 +930,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "current_salary", CUME_DIST() OVER (PARTITION BY "department" ORDER BY "current_salary") CUME_DIST FROM "employee_table" ORDER BY "department", "current_salary"',
+                "SELECT id, department, current_salary, CUME_DIST() OVER (PARTITION BY department ORDER BY current_salary) CUME_DIST FROM employee_table ORDER BY department, current_salary",
             ),
             # (exp.Select(expressions=[exp.CurrentCluster()]), "SELECT CURRENT_CLUSTER"),
             # (exp.Select(expressions=[exp.CurrentCluster()]), "SELECT CURRENT_CLUSTER"),
@@ -1584,7 +1584,7 @@ class TestExasol(Validator):
                         ),
                     ],
                 ).from_("persons"),
-                "SELECT name, age, IF age < 18 THEN 'underaged' ELSE 'adult' ENDIF LEGALITY FROM \"persons\"",
+                "SELECT name, age, IF age < 18 THEN 'underaged' ELSE 'adult' ENDIF LEGALITY FROM persons",
             ),
             (
                 exp.Select(
@@ -1647,7 +1647,7 @@ class TestExasol(Validator):
                     ],
                     order=exp.Order(expressions=[exp.Ordered(this=exp.Identifier(this="c1"))]),
                 ).from_("t"),
-                'SELECT "c1", IPROC() IPROC FROM "t" ORDER BY "c1"',
+                "SELECT c1, IPROC() IPROC FROM t ORDER BY c1",
             ),
             (
                 exp.Select(
@@ -1748,7 +1748,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", LAG("id", 1) OVER (PARTITION BY "department" ORDER BY "hire_date") LAG FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, LAG(id, 1) OVER (PARTITION BY department ORDER BY hire_date) LAG FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -1774,7 +1774,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", LAST_VALUE(id) OVER (PARTITION BY "department" ORDER BY "hire_date") LAST_ FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, LAST_VALUE(id) OVER (PARTITION BY department ORDER BY hire_date) LAST_ FROM employee_table ORDER BY department, hire_date",
             ),
             # (
             #     exp.Select(
@@ -1814,7 +1814,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", LEAD("id", 1) OVER (PARTITION BY "department" ORDER BY "hire_date") LEAD FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, LEAD(id, 1) OVER (PARTITION BY department ORDER BY hire_date) LEAD FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -2291,7 +2291,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", NTILE(4) OVER (PARTITION BY "department" ORDER BY "hire_date") NTILE FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, NTILE(4) OVER (PARTITION BY department ORDER BY hire_date) NTILE FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -2479,7 +2479,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "current_salary", PERCENT_RANK() OVER (PARTITION BY "department" ORDER BY "current_salary") PERCENT_RANK FROM "employee_table" ORDER BY "department", "current_salary"',
+                "SELECT id, department, current_salary, PERCENT_RANK() OVER (PARTITION BY department ORDER BY current_salary) PERCENT_RANK FROM employee_table ORDER BY department, current_salary",
             ),
             (
                 exp.Alias(
@@ -2591,7 +2591,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "current_salary", RANK() OVER (PARTITION BY "department" ORDER BY current_salary) RANK FROM "employee_table" ORDER BY "department", "current_salary"',
+                "SELECT id, department, current_salary, RANK() OVER (PARTITION BY department ORDER BY current_salary) RANK FROM employee_table ORDER BY department, current_salary",
             ),
             (
                 exp.Select(
@@ -2617,7 +2617,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "current_salary", RATIO_TO_REPORT(current_salary) OVER (PARTITION BY "department") RATIO_TO_REPORT FROM "employee_table" ORDER BY "department", "current_salary"',
+                "SELECT id, department, current_salary, RATIO_TO_REPORT(current_salary) OVER (PARTITION BY department) RATIO_TO_REPORT FROM employee_table ORDER BY department, current_salary",
             ),
             (
                 exp.Select(
@@ -2707,7 +2707,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", REGR_SLOPE("starting_salary", "current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") REGR_SLOPE FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, REGR_SLOPE(starting_salary, current_salary) OVER (PARTITION BY department ORDER BY hire_date) REGR_SLOPE FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -2871,14 +2871,14 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", ROW_NUMBER() OVER (PARTITION BY "department" ORDER BY "hire_date") ROW_NUMBER FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, ROW_NUMBER() OVER (PARTITION BY department ORDER BY hire_date) ROW_NUMBER FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.select(
                     exp.Anonymous(this="ROWID"),
                     "i",
                 ).from_("t"),
-                'SELECT ROWID, "i" FROM "t"',
+                "SELECT ROWID, i FROM t",
             ),
             (
                 exp.Select(
@@ -2893,21 +2893,6 @@ class TestExasol(Validator):
                 ),
                 "SELECT RPAD('abc', 5, 'X')",
             ),
-            # (
-            #     exp.Select(
-            #         expressions=[
-            #             exp.Anonymous(
-            #                 this="RPAD",
-            #                 expressions=[
-            #                     exp.Literal.string("abc"),
-            #                     exp.Literal.number(5),
-            #                     exp.Literal.string("X"),
-            #                 ],
-            #             )
-            #         ]
-            #     ),
-            #     "SELECT RPAD('abc', 5, 'X')",
-            # ),
             (
                 exp.Select(
                     expressions=[
@@ -2928,7 +2913,7 @@ class TestExasol(Validator):
                     kind="VIEW",
                     expression=exp.Select(expressions=[exp.Anonymous(this="SCOPE_USER")]),
                 ),
-                'CREATE VIEW "scope_view" AS SELECT SCOPE_USER',
+                "CREATE VIEW scope_view AS SELECT SCOPE_USER",
             ),
             (
                 exp.Select(
@@ -2975,7 +2960,7 @@ class TestExasol(Validator):
                         )
                     ]
                 ),
-                "SELECT SESSION_PARAMETER(\"current_session\", 'NLS_FIRST_DAY_OF_WEEK') SESSION_VALUE",
+                "SELECT SESSION_PARAMETER(current_session, 'NLS_FIRST_DAY_OF_WEEK') SESSION_VALUE",
             ),
             (
                 exp.select(
@@ -3086,7 +3071,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", STDDEV("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") STDDEV FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, STDDEV(current_salary) OVER (PARTITION BY department ORDER BY hire_date) STDDEV FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -3115,7 +3100,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", STDDEV_POP("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") STDDEV_POP FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, STDDEV_POP(current_salary) OVER (PARTITION BY department ORDER BY hire_date) STDDEV_POP FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -3144,7 +3129,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", STDDEV_SAMP("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") STDDEV_SAMP FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, STDDEV_SAMP(current_salary) OVER (PARTITION BY department ORDER BY hire_date) STDDEV_SAMP FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -3189,7 +3174,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", SUM("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") SUM_SALARY FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, SUM(current_salary) OVER (PARTITION BY department ORDER BY hire_date) SUM_SALARY FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(expressions=[exp.Alias(this=exp.Anonymous(this="SYS_GUID"))]),
@@ -3651,7 +3636,7 @@ class TestExasol(Validator):
                         ),
                     ]
                 ).from_("t"),
-                'SELECT IPROC(), "c1", VALUE2PROC("c1") V2P_1, "c2", VALUE2PROC("c2") V2P_2 FROM "t"',
+                "SELECT IPROC(), c1, VALUE2PROC(c1) V2P_1, c2, VALUE2PROC(c2) V2P_2 FROM t",
             ),
             (
                 exp.Select(
@@ -3680,7 +3665,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", VAR_POP("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") VAR_POP FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, VAR_POP(current_salary) OVER (PARTITION BY department ORDER BY hire_date) VAR_POP FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -3710,7 +3695,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", VAR_SAMP("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") VAR_SAMP FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, VAR_SAMP(current_salary) OVER (PARTITION BY department ORDER BY hire_date) VAR_SAMP FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
@@ -3739,7 +3724,7 @@ class TestExasol(Validator):
                         ]
                     ),
                 ).from_("employee_table"),
-                'SELECT "id", "department", "hire_date", "current_salary", VARIANCE("current_salary") OVER (PARTITION BY "department" ORDER BY "hire_date") VARIANCE FROM "employee_table" ORDER BY "department", "hire_date"',
+                "SELECT id, department, hire_date, current_salary, VARIANCE(current_salary) OVER (PARTITION BY department ORDER BY hire_date) VARIANCE FROM employee_table ORDER BY department, hire_date",
             ),
             (
                 exp.Select(
