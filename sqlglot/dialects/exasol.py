@@ -23,39 +23,44 @@ def _str_to_time_sql(self: Exasol.Generator, expression: exp.StrToTime) -> str:
     this_expr = expression.args.get("this") or (
         expression.expressions[0] if expression.expressions else None
     )
-    if not this_expr:
-        raise ValueError("StrToTime is missing required 'this' argument")
 
-    this = self.sql(this_expr)
-
+    this = self.sql(this_expr) if this_expr else "NULL"
     fmt_expr = expression.args.get("format")
-    if fmt_expr and hasattr(fmt_expr, "this"):
-        fmt_str = self._normalize_date_format(fmt_expr.this)
+    fmt_str = (
+        self._normalize_date_format(fmt_expr.this)
+        if fmt_expr and hasattr(fmt_expr, "this")
+        else None
+    )
+
+    if getattr(this_expr, "name", "").lower() == "date" and fmt_str:
+        result = f"TO_DATE({this}, '{fmt_str}')"
+    elif fmt_str:
         result = f"TO_TIMESTAMP({this}, '{fmt_str}')"
     else:
         result = f"CAST({this} AS TIMESTAMP)"
-
-    # Only print when needed
-    if this_expr.name == "date":
-        print(f"[DEBUG] Generating StrToTime for {this_expr}: {result}")
-        return f"TO_DATE({this}, '{fmt_str}')"
 
     return result
 
 
 def _str_to_date_sql(self: Exasol.Generator, expression: exp.StrToDate) -> str:
     """
-    Handles TO_DATE(expr) translation for Exasol.
-    Exasol does not support format strings in TO_DATE like Oracle or MySQL.
-    If format is provided, assume it's already in the correct format and ignore it.
+    Handles TO_DATE(expr[, format]) translation for Exasol.
+    - If a format is provided, normalize and use it.
+    - If no format is provided, Exasol will rely on the session NLS_DATE_FORMAT.
     """
-    value_expr = expression.this
-    value_sql = self.sql(value_expr)
+    value_sql = self.sql(expression.this)
+    fmt_expr = expression.args.get("format")
+
+    if fmt_expr and hasattr(fmt_expr, "this"):
+        fmt_str = self._normalize_date_format(fmt_expr.this)
+        return f"TO_DATE({value_sql}, '{fmt_str}')"
+
     return f"TO_DATE({value_sql})"
 
 
 class Tokenizer(tokens.Tokenizer):
     IDENTIFIER_ESCAPES = ['"']
+    IDENTIFIER = ['"']
     STRING_ESCAPES = ["'"]
 
     KEYWORDS = {
@@ -556,18 +561,6 @@ class Exasol(Dialect):
             expression = expression.copy()
             expression.set("this", self.wrap_to_date_if_date_col(expression.this))
             return super().lte_sql(expression)
-
-        def identifier_sql(self, expression: exp.Identifier) -> str:
-            parent = expression.parent
-
-            # Do NOT quote if it's the schema (db) or catalog
-            if isinstance(parent, exp.Table) and (
-                parent.args.get("db") is expression or parent.args.get("catalog") is expression
-            ):
-                return expression.this
-
-            # Quote everything else (columns, table names, etc.)
-            return f'"{expression.this}"'
 
         def _normalize_date_format(self, fmt: str) -> str:
             # If fmt contains Python style like '%Y%m%d', remove % and convert:
