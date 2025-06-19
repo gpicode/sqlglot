@@ -1207,14 +1207,11 @@ class Exasol(Dialect):
                 return f"{arg.args['prefix']} '{arg.this}'"
             return self.sql(e, key)
 
-        # def alias_sql(self, expression):
-        #     return f"{self.sql(expression, 'this')} {self.sql(expression, 'alias')}"
-        def alias_sql(self, expression):
-            alias = expression.args.get("alias")
-            if alias:
-                alias_str = alias if isinstance(alias, exp.Identifier) else self.sql(alias)
-                return f"{self.sql(expression, 'this')} {alias_str}"
-            return self.sql(expression, "this")
+
+        def alias_sql(self, expression: exp.Alias) -> str:
+            alias = self.sql(expression, "alias")
+            alias = f" {alias}" if alias else ""
+            return f"{self.sql(expression, 'this')}{alias}"
 
         def windowed_func(self, name, e):
             sql = f"{name}({self.sql(e, 'this')})"
