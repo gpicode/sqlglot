@@ -281,9 +281,11 @@ class Exasol(Dialect):
             if not (
                 this and isinstance(this, exp.DataType) and isinstance(this.this, exp.Interval)
             ):
-                return None  # or raise error if it should not proceed
+                return None
 
             interval = this.this
+            unit = None
+
             if isinstance(interval.unit, exp.Var) and (
                 interval.unit.this == "DAY" or interval.unit.this == "YEAR"
             ):
@@ -300,12 +302,15 @@ class Exasol(Dialect):
                     )
                     if unit == "DAY":
                         self._match_lfp_or_fsp()  # handle SECOND(fsp)
+
                 if not is_match:
                     self.raise_error(f"Expected `TO` to follow `{unit}` in `INTERVAL` type")
+
             elif isinstance(interval.unit, exp.IntervalSpan):
                 self._match_lfp_or_fsp()
             else:
-                self.raise_error("Expected `DAY` or `YEAR` to follow `INTERVAL` type")
+                unit_display = unit if unit is not None else "<unknown>"
+                self.raise_error(f"Expected `{unit_display}` to follow `INTERVAL` type")
 
             return this
 
@@ -911,12 +916,11 @@ class Exasol(Dialect):
                 return f"{arg.args['prefix']} '{arg.this}'"
             return self.sql(e, key)
 
-        def alias_sql(self, expression):
-            alias = expression.args.get("alias")
-            if alias:
-                alias_str = alias.this if isinstance(alias, exp.Identifier) else self.sql(alias)
-                return f"{self.sql(expression, 'this')} {alias_str}"
-            return self.sql(expression, "this")
+
+        def alias_sql(self, expression: exp.Alias) -> str:
+            alias = self.sql(expression, "alias")
+            alias = f" {alias}" if alias else ""
+            return f"{self.sql(expression, 'this')}{alias}"
 
         def windowed_func(self, name, e):
             sql = f"{name}({self.sql(e, 'this')})"
