@@ -957,7 +957,7 @@ class TestParser(unittest.TestCase):
         ast = parse_one("YEAR(a) /* sqlglot.anon */")
         self.assertIsInstance(ast, exp.Year)
 
-    def test_identifier_meta(self):
+    def test_token_position_meta(self):
         ast = parse_one(
             "SELECT a, b FROM test_schema.test_table_a UNION ALL SELECT c, d FROM test_catalog.test_schema.test_table_b"
         )
@@ -985,6 +985,15 @@ class TestParser(unittest.TestCase):
             {"line": 1, "col": 81, "start": 69, "end": 80},
         )
 
+        ast = parse_one("SELECT FOO()")
+        self.assertEqual(ast.find(exp.Anonymous).meta, {"line": 1, "col": 10, "start": 7, "end": 9})
+
+        ast = parse_one("SELECT * FROM t")
+        self.assertEqual(ast.find(exp.Star).meta, {"line": 1, "col": 8, "start": 7, "end": 7})
+
+        ast = parse_one("SELECT t.* FROM t")
+        self.assertEqual(ast.find(exp.Star).meta, {"line": 1, "col": 10, "start": 9, "end": 9})
+
     def test_quoted_identifier_meta(self):
         sql = 'SELECT "a" FROM "test_schema"."test_table_a"'
         ast = parse_one(sql)
@@ -994,3 +1003,9 @@ class TestParser(unittest.TestCase):
 
         table_meta = ast.args["from"].this.this.meta
         self.assertEqual(sql[table_meta["start"] : table_meta["end"] + 1], '"test_table_a"')
+
+    def test_qualified_function(self):
+        sql = "a.b.c.d.e.f.g.foo()"
+        ast = parse_one(sql)
+        assert not any(isinstance(n, exp.Column) for n in ast.walk())
+        assert len(list(ast.find_all(exp.Dot))) == 7

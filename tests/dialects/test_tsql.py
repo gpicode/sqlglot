@@ -39,7 +39,7 @@ class TestTSQL(Validator):
         self.validate_identity("CAST(x AS int) OR y", "CAST(x AS INTEGER) <> 0 OR y <> 0")
         self.validate_identity("TRUNCATE TABLE t1 WITH (PARTITIONS(1, 2 TO 5, 10 TO 20, 84))")
         self.validate_identity(
-            "SELECT TOP 10 s.RECORDID, n.c.value('(/*:FORM_ROOT/*:SOME_TAG)[1]', 'float') AS SOME_TAG_VALUE FROM source_table.dbo.source_data AS s(nolock) CROSS APPLY FormContent.nodes('/*:FORM_ROOT') AS N(C)"
+            "SELECT TOP 10 s.RECORDID, n.c.VALUE('(/*:FORM_ROOT/*:SOME_TAG)[1]', 'float') AS SOME_TAG_VALUE FROM source_table.dbo.source_data AS s(nolock) CROSS APPLY FormContent.nodes('/*:FORM_ROOT') AS N(C)"
         )
         self.validate_identity(
             "CREATE CLUSTERED INDEX [IX_OfficeTagDetail_TagDetailID] ON [dbo].[OfficeTagDetail]([TagDetailID] ASC)"
@@ -62,6 +62,13 @@ class TestTSQL(Validator):
             "SELECT 1 WHERE EXISTS(SELECT 1)",
         )
 
+        self.validate_all(
+            "SELECT CONVERT(DATETIME, '2006-04-25T15:50:59.997', 126)",
+            write={
+                "duckdb": "SELECT STRPTIME('2006-04-25T15:50:59.997', '%Y-%m-%dT%H:%M:%S.%f')",
+                "tsql": "SELECT CONVERT(DATETIME, '2006-04-25T15:50:59.997', 126)",
+            },
+        )
         self.validate_all(
             "WITH A AS (SELECT 2 AS value), C AS (SELECT * FROM A) SELECT * INTO TEMP_NESTED_WITH FROM (SELECT * FROM C) AS temp",
             read={
@@ -569,6 +576,79 @@ class TestTSQL(Validator):
             },
         )
 
+    def test_for_xml(self):
+        xml_possible_options = [
+            "RAW('ElementName')",
+            "RAW('ElementName'), BINARY BASE64",
+            "RAW('ElementName'), TYPE",
+            "RAW('ElementName'), ROOT('RootName')",
+            "RAW('ElementName'), BINARY BASE64, TYPE",
+            "RAW('ElementName'), BINARY BASE64, ROOT('RootName')",
+            "RAW('ElementName'), TYPE, ROOT('RootName')",
+            "RAW('ElementName'), BINARY BASE64, TYPE, ROOT('RootName')",
+            "RAW('ElementName'), XMLDATA",
+            "RAW('ElementName'), XMLSCHEMA('TargetNameSpaceURI')",
+            "RAW('ElementName'), XMLDATA, ELEMENTS XSINIL",
+            "RAW('ElementName'), XMLSCHEMA('TargetNameSpaceURI'), ELEMENTS ABSENT",
+            "RAW('ElementName'), XMLDATA, ELEMENTS ABSENT",
+            "RAW('ElementName'), XMLSCHEMA('TargetNameSpaceURI'), ELEMENTS XSINIL",
+            "AUTO",
+            "AUTO, BINARY BASE64",
+            "AUTO, TYPE",
+            "AUTO, ROOT('RootName')",
+            "AUTO, BINARY BASE64, TYPE",
+            "AUTO, TYPE, ROOT('RootName')",
+            "AUTO, BINARY BASE64, TYPE, ROOT('RootName')",
+            "AUTO, XMLDATA",
+            "AUTO, XMLSCHEMA('TargetNameSpaceURI')",
+            "AUTO, XMLDATA, ELEMENTS XSINIL",
+            "AUTO, XMLSCHEMA('TargetNameSpaceURI'), ELEMENTS ABSENT",
+            "AUTO, XMLDATA, ELEMENTS ABSENT",
+            "AUTO, XMLSCHEMA('TargetNameSpaceURI'), ELEMENTS XSINIL",
+            "EXPLICIT",
+            "EXPLICIT, BINARY BASE64",
+            "EXPLICIT, TYPE",
+            "EXPLICIT, ROOT('RootName')",
+            "EXPLICIT, BINARY BASE64, TYPE",
+            "EXPLICIT, TYPE, ROOT('RootName')",
+            "EXPLICIT, BINARY BASE64, TYPE, ROOT('RootName')",
+            "EXPLICIT, XMLDATA",
+            "EXPLICIT, XMLDATA, BINARY BASE64",
+            "EXPLICIT, XMLDATA, TYPE",
+            "EXPLICIT, XMLDATA, ROOT('RootName')",
+            "EXPLICIT, XMLDATA, BINARY BASE64, TYPE",
+            "EXPLICIT, XMLDATA, BINARY BASE64, TYPE, ROOT('RootName')",
+            "PATH('ElementName')",
+            "PATH('ElementName'), BINARY BASE64",
+            "PATH('ElementName'), TYPE",
+            "PATH('ElementName'), ROOT('RootName')",
+            "PATH('ElementName'), BINARY BASE64, TYPE",
+            "PATH('ElementName'), TYPE, ROOT('RootName')",
+            "PATH('ElementName'), BINARY BASE64, TYPE, ROOT('RootName')",
+            "PATH('ElementName'), ELEMENTS XSINIL",
+            "PATH('ElementName'), ELEMENTS ABSENT",
+            "PATH('ElementName'), BINARY BASE64, ELEMENTS XSINIL",
+            "PATH('ElementName'), TYPE, ELEMENTS ABSENT",
+            "PATH('ElementName'), ROOT('RootName'), ELEMENTS XSINIL",
+            "PATH('ElementName'), BINARY BASE64, TYPE, ROOT('RootName'), ELEMENTS ABSENT",
+        ]
+
+        for xml_option in xml_possible_options:
+            with self.subTest(f"Testing FOR XML option: {xml_option}"):
+                self.validate_identity(f"SELECT * FROM t FOR XML {xml_option}")
+
+        self.validate_identity(
+            "SELECT * FROM t FOR XML PATH, BINARY BASE64, ELEMENTS XSINIL",
+            """SELECT
+  *
+FROM t
+FOR XML
+  PATH,
+  BINARY BASE64,
+  ELEMENTS XSINIL""",
+            pretty=True,
+        )
+
     def test_types(self):
         self.validate_identity("CAST(x AS XML)")
         self.validate_identity("CAST(x AS UNIQUEIDENTIFIER)")
@@ -904,18 +984,18 @@ class TestTSQL(Validator):
 
         self.validate_identity("CREATE SCHEMA testSchema")
         self.validate_identity("CREATE VIEW t AS WITH cte AS (SELECT 1 AS c) SELECT c FROM cte")
-        self.validate_identity("ALTER TABLE tbl SET SYSTEM_VERSIONING=OFF")
-        self.validate_identity("ALTER TABLE tbl SET FILESTREAM_ON = 'test'")
-        self.validate_identity("ALTER TABLE tbl SET DATA_DELETION=ON")
-        self.validate_identity("ALTER TABLE tbl SET DATA_DELETION=OFF")
+        self.validate_identity("ALTER TABLE tbl SET (SYSTEM_VERSIONING=OFF)")
+        self.validate_identity("ALTER TABLE tbl SET (FILESTREAM_ON = 'test')")
+        self.validate_identity("ALTER TABLE tbl SET (DATA_DELETION=ON)")
+        self.validate_identity("ALTER TABLE tbl SET (DATA_DELETION=OFF)")
         self.validate_identity(
-            "ALTER TABLE tbl SET SYSTEM_VERSIONING=ON(HISTORY_TABLE=db.tbl, DATA_CONSISTENCY_CHECK=OFF, HISTORY_RETENTION_PERIOD=5 DAYS)"
+            "ALTER TABLE tbl SET (SYSTEM_VERSIONING=ON(HISTORY_TABLE=db.tbl, DATA_CONSISTENCY_CHECK=OFF, HISTORY_RETENTION_PERIOD=5 DAYS))"
         )
         self.validate_identity(
-            "ALTER TABLE tbl SET SYSTEM_VERSIONING=ON(HISTORY_TABLE=db.tbl, HISTORY_RETENTION_PERIOD=INFINITE)"
+            "ALTER TABLE tbl SET (SYSTEM_VERSIONING=ON(HISTORY_TABLE=db.tbl, HISTORY_RETENTION_PERIOD=INFINITE))"
         )
         self.validate_identity(
-            "ALTER TABLE tbl SET DATA_DELETION=ON(FILTER_COLUMN=col, RETENTION_PERIOD=5 MONTHS)"
+            "ALTER TABLE tbl SET (DATA_DELETION=ON(FILTER_COLUMN=col, RETENTION_PERIOD=5 MONTHS))"
         )
 
         self.validate_identity("ALTER VIEW v AS SELECT a, b, c, d FROM foo")
@@ -1775,6 +1855,10 @@ WHERE
             write={
                 "spark": "SELECT * FROM A LIMIT 3",
             },
+        )
+        self.validate_identity(
+            "CREATE TABLE schema.table AS SELECT a, id FROM (SELECT a, (SELECT id FROM tb ORDER BY t DESC LIMIT 1) as id FROM tbl) AS _subquery",
+            "SELECT * INTO schema.table FROM (SELECT a AS a, id AS id FROM (SELECT a AS a, (SELECT TOP 1 id FROM tb ORDER BY t DESC) AS id FROM tbl) AS _subquery) AS temp",
         )
         self.validate_identity("SELECT TOP 10 PERCENT")
         self.validate_identity("SELECT TOP 10 PERCENT WITH TIES")

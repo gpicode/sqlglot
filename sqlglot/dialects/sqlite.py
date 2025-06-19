@@ -94,8 +94,12 @@ class SQLite(Dialect):
         IDENTIFIERS = ['"', ("[", "]"), "`"]
         HEX_STRINGS = [("x'", "'"), ("X'", "'"), ("0x", ""), ("0X", "")]
 
+        NESTED_COMMENTS = False
+
         KEYWORDS = tokens.Tokenizer.KEYWORDS.copy()
         KEYWORDS.pop("/*+")
+
+        COMMANDS = {*tokens.Tokenizer.COMMANDS, TokenType.REPLACE}
 
     class Parser(parser.Parser):
         FUNCTIONS = {
@@ -105,7 +109,9 @@ class SQLite(Dialect):
             "DATETIME": lambda args: exp.Anonymous(this="DATETIME", expressions=args),
             "TIME": lambda args: exp.Anonymous(this="TIME", expressions=args),
         }
+
         STRING_ALIASES = True
+        ALTER_RENAME_REQUIRES_COLUMN = False
 
         def _parse_unique(self) -> exp.UniqueColumnConstraint:
             # Do not consume more tokens if UNIQUE is used as a standalone constraint, e.g:
@@ -305,3 +311,10 @@ class SQLite(Dialect):
         @unsupported_args("this")
         def currentschema_sql(self, expression: exp.CurrentSchema) -> str:
             return "'main'"
+
+        def ignorenulls_sql(self, expression: exp.IgnoreNulls) -> str:
+            self.unsupported("SQLite does not support IGNORE NULLS.")
+            return self.sql(expression.this)
+
+        def respectnulls_sql(self, expression: exp.RespectNulls) -> str:
+            return self.sql(expression.this)

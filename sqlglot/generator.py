@@ -201,6 +201,7 @@ class Generator(metaclass=_Generator):
         exp.StreamingTableProperty: lambda *_: "STREAMING",
         exp.StrictProperty: lambda *_: "STRICT",
         exp.SwapTable: lambda self, e: f"SWAP WITH {self.sql(e, 'this')}",
+        exp.TableColumn: lambda self, e: self.sql(e.this),
         exp.Tags: lambda self, e: f"TAG ({self.expressions(e, flat=True)})",
         exp.TemporaryProperty: lambda *_: "TEMPORARY",
         exp.TitleColumnConstraint: lambda self, e: f"TITLE {self.sql(e, 'this')}",
@@ -460,6 +461,14 @@ class Generator(metaclass=_Generator):
     # Whether UNIX_SECONDS(timestamp) is supported
     SUPPORTS_UNIX_SECONDS = False
 
+    # Whether to wrap <props> in `AlterSet`, e.g., ALTER ... SET (<props>)
+    ALTER_SET_WRAPPED = False
+
+    # Whether to normalize the date parts in EXTRACT(<date_part> FROM <expr>) into a common representation
+    # For instance, to extract the day of week in ISO semantics, one can use ISODOW, DAYOFWEEKISO etc depending on the dialect.
+    # TODO: The normalization should be done by default once we've tested it across all dialects.
+    NORMALIZE_EXTRACT_DATE_PARTS = False
+
     # The name to generate for the JSONPath expression. If `None`, only `this` will be generated
     PARSE_JSON_NAME: t.Optional[str] = "PARSE_JSON"
 
@@ -667,6 +676,8 @@ class Generator(metaclass=_Generator):
     # Expressions that need to have all CTEs under them bubbled up to them
     EXPRESSIONS_WITHOUT_NESTED_CTES: t.Set[t.Type[exp.Expression]] = set()
 
+    RESPECT_IGNORE_NULLS_UNSUPPORTED_EXPRESSIONS: t.Tuple[t.Type[exp.Expression], ...] = ()
+
     SENTINEL_LINE_BREAK = "__SQLGLOT__LB__"
 
     __slots__ = (
@@ -806,9 +817,14 @@ class Generator(metaclass=_Generator):
     def seg(self, sql: str, sep: str = " ") -> str:
         return f"{self.sep(sep)}{sql}"
 
-    def pad_comment(self, comment: str) -> str:
+    def sanitize_comment(self, comment: str) -> str:
         comment = " " + comment if comment[0].strip() else comment
         comment = comment + " " if comment[-1].strip() else comment
+
+        if not self.dialect.tokenizer_class.NESTED_COMMENTS:
+            # Necessary workaround to avoid syntax errors due to nesting: /* ... */ ... */
+            comment = comment.replace("*/", "* /")
+
         return comment
 
     def maybe_comment(
@@ -828,7 +844,7 @@ class Generator(metaclass=_Generator):
             return sql
 
         comments_sql = " ".join(
-            f"/*{self.pad_comment(comment)}*/" for comment in comments if comment
+            f"/*{self.sanitize_comment(comment)}*/" for comment in comments if comment
         )
 
         if not comments_sql:
@@ -1008,6 +1024,7 @@ class Generator(metaclass=_Generator):
             persisted = " PERSISTED"
         else:
             persisted = ""
+
         return f"AS {this}{persisted}"
 
     def autoincrementcolumnconstraint_sql(self, _) -> str:
@@ -1068,9 +1085,6 @@ class Generator(metaclass=_Generator):
 
     def notnullcolumnconstraint_sql(self, expression: exp.NotNullColumnConstraint) -> str:
         return f"{'' if expression.args.get('allow_null') else 'NOT '}NULL"
-
-    def transformcolumnconstraint_sql(self, expression: exp.TransformColumnConstraint) -> str:
-        return f"AS {self.sql(expression, 'this')}"
 
     def primarykeycolumnconstraint_sql(self, expression: exp.PrimaryKeyColumnConstraint) -> str:
         desc = expression.args.get("desc")
@@ -2594,12 +2608,17 @@ class Generator(metaclass=_Generator):
             *self.offset_limit_modifiers(expression, isinstance(limit, exp.Fetch), limit),
             *self.after_limit_modifiers(expression),
             self.options_modifier(expression),
+            self.for_modifiers(expression),
             sep="",
         )
 
     def options_modifier(self, expression: exp.Expression) -> str:
         options = self.expressions(expression, key="options")
         return f" {options}" if options else ""
+
+    def for_modifiers(self, expression: exp.Expression) -> str:
+        for_modifiers = self.expressions(expression, key="for")
+        return f"{self.sep()}FOR XML{self.seg(for_modifiers)}" if for_modifiers else ""
 
     def queryoption_sql(self, expression: exp.QueryOption) -> str:
         self.unsupported("Unsupported query option.")
@@ -2896,9 +2915,17 @@ class Generator(metaclass=_Generator):
         return f"NEXT VALUE FOR {self.sql(expression, 'this')}{order}"
 
     def extract_sql(self, expression: exp.Extract) -> str:
-        this = self.sql(expression, "this") if self.EXTRACT_ALLOWS_QUOTES else expression.this.name
+        from sqlglot.dialects.dialect import map_date_part
+
+        this = (
+            map_date_part(expression.this, self.dialect)
+            if self.NORMALIZE_EXTRACT_DATE_PARTS
+            else expression.this
+        )
+        this_sql = self.sql(this) if self.EXTRACT_ALLOWS_QUOTES else this.name
         expression_sql = self.sql(expression, "expression")
-        return f"EXTRACT({this} FROM {expression_sql})"
+
+        return f"EXTRACT({this_sql} FROM {expression_sql})"
 
     def trim_sql(self, expression: exp.Trim) -> str:
         trim_type = self.sql(expression, "position")
@@ -3246,7 +3273,7 @@ class Generator(metaclass=_Generator):
                 if expression.comments and self.comments:
                     for comment in expression.comments:
                         if comment:
-                            op += f" /*{self.pad_comment(comment)}*/"
+                            op += f" /*{self.sanitize_comment(comment)}*/"
                 stack.extend((op, expression.left))
             return op
 
@@ -3428,21 +3455,32 @@ class Generator(metaclass=_Generator):
 
     def alterset_sql(self, expression: exp.AlterSet) -> str:
         exprs = self.expressions(expression, flat=True)
+        if self.ALTER_SET_WRAPPED:
+            exprs = f"({exprs})"
+
         return f"SET {exprs}"
 
     def alter_sql(self, expression: exp.Alter) -> str:
         actions = expression.args["actions"]
 
-        if isinstance(actions[0], exp.ColumnDef):
-            actions = self.add_column_sql(expression)
-        elif isinstance(actions[0], exp.Schema):
-            actions = self.expressions(expression, key="actions", prefix="ADD COLUMNS ")
-        elif isinstance(actions[0], exp.Delete):
-            actions = self.expressions(expression, key="actions", flat=True)
-        elif isinstance(actions[0], exp.Query):
-            actions = "AS " + self.expressions(expression, key="actions")
+        if not self.dialect.ALTER_TABLE_ADD_REQUIRED_FOR_EACH_COLUMN and isinstance(
+            actions[0], exp.ColumnDef
+        ):
+            actions_sql = self.expressions(expression, key="actions", flat=True)
+            actions_sql = f"ADD {actions_sql}"
         else:
-            actions = self.expressions(expression, key="actions", flat=True)
+            actions_list = []
+            for action in actions:
+                if isinstance(action, (exp.ColumnDef, exp.Schema)):
+                    action_sql = self.add_column_sql(action)
+                else:
+                    action_sql = self.sql(action)
+                    if isinstance(action, exp.Query):
+                        action_sql = f"AS {action_sql}"
+
+                actions_list.append(action_sql)
+
+            actions_sql = self.format_args(*actions_list)
 
         exists = " IF EXISTS" if expression.args.get("exists") else ""
         on_cluster = self.sql(expression, "cluster")
@@ -3453,17 +3491,18 @@ class Generator(metaclass=_Generator):
         kind = self.sql(expression, "kind")
         not_valid = " NOT VALID" if expression.args.get("not_valid") else ""
 
-        return f"ALTER {kind}{exists}{only} {self.sql(expression, 'this')}{on_cluster} {actions}{not_valid}{options}"
+        return f"ALTER {kind}{exists}{only} {self.sql(expression, 'this')}{on_cluster} {actions_sql}{not_valid}{options}"
 
-    def add_column_sql(self, expression: exp.Alter) -> str:
-        if self.ALTER_TABLE_INCLUDE_COLUMN_KEYWORD:
-            return self.expressions(
-                expression,
-                key="actions",
-                prefix="ADD COLUMN ",
-                skip_first=True,
-            )
-        return f"ADD {self.expressions(expression, key='actions', flat=True)}"
+    def add_column_sql(self, expression: exp.Expression) -> str:
+        sql = self.sql(expression)
+        if isinstance(expression, exp.Schema):
+            column_text = " COLUMNS"
+        elif isinstance(expression, exp.ColumnDef) and self.ALTER_TABLE_INCLUDE_COLUMN_KEYWORD:
+            column_text = " COLUMN"
+        else:
+            column_text = ""
+
+        return f"ADD{column_text} {sql}"
 
     def droppartition_sql(self, expression: exp.DropPartition) -> str:
         expressions = self.expressions(expression)
@@ -3472,6 +3511,10 @@ class Generator(metaclass=_Generator):
 
     def addconstraint_sql(self, expression: exp.AddConstraint) -> str:
         return f"ADD {self.expressions(expression)}"
+
+    def addpartition_sql(self, expression: exp.AddPartition) -> str:
+        exists = "IF NOT EXISTS " if expression.args.get("exists") else ""
+        return f"ADD {exists}{self.sql(expression.this)}"
 
     def distinct_sql(self, expression: exp.Distinct) -> str:
         this = self.expressions(expression, flat=True)
@@ -4268,6 +4311,13 @@ class Generator(metaclass=_Generator):
         return expression
 
     def _embed_ignore_nulls(self, expression: exp.IgnoreNulls | exp.RespectNulls, text: str) -> str:
+        this = expression.this
+        if isinstance(this, self.RESPECT_IGNORE_NULLS_UNSUPPORTED_EXPRESSIONS):
+            self.unsupported(
+                f"RESPECT/IGNORE NULLS is not supported for {type(this).key} in {self.dialect.__class__.__name__}"
+            )
+            return self.sql(this)
+
         if self.IGNORE_NULLS_IN_FUNC and not expression.meta.get("inline"):
             # The first modifier here will be the one closest to the AggFunc's arg
             mods = sorted(
@@ -4287,7 +4337,8 @@ class Generator(metaclass=_Generator):
             agg_func = expression.find(exp.AggFunc)
 
             if agg_func:
-                return self.sql(agg_func)[:-1] + f" {text})"
+                agg_func_sql = self.sql(agg_func, comment=False)[:-1] + f" {text})"
+                return self.maybe_comment(agg_func_sql, comments=agg_func.comments)
 
         return f"{self.sql(expression, 'this')} {text}"
 
@@ -4729,7 +4780,10 @@ class Generator(metaclass=_Generator):
 
     def detach_sql(self, expression: exp.Detach) -> str:
         this = self.sql(expression, "this")
-        exists_sql = " IF EXISTS" if expression.args.get("exists") else ""
+        # the DATABASE keyword is required if IF EXISTS is set
+        # without it, DuckDB throws an error: Parser Error: syntax error at or near "exists" (Line Number: 1)
+        # ref: https://duckdb.org/docs/stable/sql/statements/attach.html#detach-syntax
+        exists_sql = " DATABASE IF EXISTS" if expression.args.get("exists") else ""
 
         return f"DETACH{exists_sql} {this}"
 
@@ -4784,6 +4838,12 @@ class Generator(metaclass=_Generator):
     def xmlelement_sql(self, expression: exp.XMLElement) -> str:
         name = f"NAME {self.sql(expression, 'this')}"
         return self.func("XMLELEMENT", name, *expression.expressions)
+
+    def xmlkeyvalueoption_sql(self, expression: exp.XMLKeyValueOption) -> str:
+        this = self.sql(expression, "this")
+        expr = self.sql(expression, "expression")
+        expr = f"({expr})" if expr else ""
+        return f"{this}{expr}"
 
     def partitionbyrangeproperty_sql(self, expression: exp.PartitionByRangeProperty) -> str:
         partitions = self.expressions(expression, "partition_expressions")

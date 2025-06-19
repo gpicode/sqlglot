@@ -1,6 +1,6 @@
 from __future__ import annotations
 import typing as t
-import datetime
+from typing import TYPE_CHECKING
 from sqlglot import exp, generator, parser, tokens
 from sqlglot.dialects.dialect import (
     Dialect,
@@ -8,170 +8,59 @@ from sqlglot.dialects.dialect import (
     build_date_delta,
     build_formatted_time,
     rename_func,
-    var_map_sql,
-    unit_to_var,
+    trim_sql,
+    timestrtotime_sql,
 )
-from sqlglot.generator import Generator
 from sqlglot.helper import is_int, seq_get
 from sqlglot.tokens import TokenType
 from sqlglot.generator import unsupported_args
 
-DATEΤΙΜΕ_DELTA = t.Union[exp.DateAdd, exp.DateDiff, exp.DateSub, exp.TimestampSub, exp.TimestampAdd]
+if TYPE_CHECKING:
+    pass
 
 
-def _build_date_format(args: t.List) -> exp.TimeToStr:
-    expr = build_formatted_time(exp.TimeToStr, "exasol")(args)
-
-    timezone = seq_get(args, 2)
-    if timezone:
-        expr.set("zone", timezone)
-
-    return expr
-
-
-def _unix_to_time_sql(self: Exasol.Generator, expression: exp.UnixToTime) -> str:
-    scale = expression.args.get("scale")
-    timestamp = expression.this
-
-    if scale in (None, exp.UnixToTime.SECONDS):
-        return self.func("fromUnixTimestamp", exp.cast(timestamp, exp.DataType.Type.BIGINT))
-    if scale == exp.UnixToTime.MILLIS:
-        return self.func("fromUnixTimestamp64Milli", exp.cast(timestamp, exp.DataType.Type.BIGINT))
-    if scale == exp.UnixToTime.MICROS:
-        return self.func("fromUnixTimestamp64Micro", exp.cast(timestamp, exp.DataType.Type.BIGINT))
-    if scale == exp.UnixToTime.NANOS:
-        return self.func("fromUnixTimestamp64Nano", exp.cast(timestamp, exp.DataType.Type.BIGINT))
-
-    return self.func(
-        "fromUnixTimestamp",
-        exp.cast(
-            exp.Div(this=timestamp, expression=exp.func("POW", 10, scale)),
-            exp.DataType.Type.BIGINT,
-        ),
+def _str_to_time_sql(self: Exasol.Generator, expression: exp.StrToTime) -> str:
+    this_expr = expression.args.get("this") or (
+        expression.expressions[0] if expression.expressions else None
     )
 
+    this = self.sql(this_expr) if this_expr else "NULL"
+    fmt_expr = expression.args.get("format")
+    fmt_str = (
+        self._normalize_date_format(fmt_expr.this)
+        if fmt_expr and hasattr(fmt_expr, "this")
+        else None
+    )
 
-def _lower_func(sql: str) -> str:
-    index = sql.index("(")
-    return sql[:index].lower() + sql[index:]
-
-
-def _quantile_sql(self: Exasol.Generator, expression: exp.Quantile) -> str:
-    quantile = expression.args["quantile"]
-    args = f"({self.sql(expression, 'this')})"
-
-    if isinstance(quantile, exp.Array):
-        func = self.func("quantiles", *quantile)
+    if getattr(this_expr, "name", "").lower() == "date" and fmt_str:
+        result = f"TO_DATE({this}, '{fmt_str}')"
+    elif fmt_str:
+        result = f"TO_TIMESTAMP({this}, '{fmt_str}')"
     else:
-        func = self.func("quantile", quantile)
+        result = f"CAST({this} AS TIMESTAMP)"
 
-    return func + args
-
-
-def _build_count_if(args: t.List) -> exp.CountIf | exp.CombinedAggFunc:
-    if len(args) == 1:
-        return exp.CountIf(this=seq_get(args, 0))
-
-    return exp.CombinedAggFunc(this="countIf", expressions=args)
+    return result
 
 
-def _build_str_to_date(args: t.List) -> exp.Cast | exp.Anonymous:
-    if len(args) == 3:
-        return exp.Anonymous(this="STR_TO_DATE", expressions=args)
+def _str_to_date_sql(self: Exasol.Generator, expression: exp.StrToDate) -> str:
+    """
+    Handles TO_DATE(expr[, format]) translation for Exasol.
+    - If a format is provided, normalize and use it.
+    - If no format is provided, Exasol will rely on the session NLS_DATE_FORMAT.
+    """
+    value_sql = self.sql(expression.this)
+    fmt_expr = expression.args.get("format")
 
-    strtodate = exp.StrToDate.from_arg_list(args)
-    return exp.cast(strtodate, exp.DataType.build(exp.DataType.Type.DATETIME))
+    if fmt_expr and hasattr(fmt_expr, "this"):
+        fmt_str = self._normalize_date_format(fmt_expr.this)
+        return f"TO_DATE({value_sql}, '{fmt_str}')"
 
-
-def _datetime_delta_sql(name: str) -> t.Callable[[Generator, DATEΤΙΜΕ_DELTA], str]:
-    def _delta_sql(self: Generator, expression: DATEΤΙΜΕ_DELTA) -> str:
-        if not expression.unit:
-            return rename_func(name)(self, expression)
-
-        return self.func(
-            name,
-            unit_to_var(expression),
-            expression.expression,
-            expression.this,
-        )
-
-    return _delta_sql
-
-
-def _timestrtotime_sql(self: Exasol.Generator, expression: exp.TimeStrToTime):
-    ts = expression.this
-
-    tz = expression.args.get("zone")
-    if tz and isinstance(ts, exp.Literal):
-        # Clickhouse will not accept timestamps that include a UTC offset, so we must remove them.
-        # The first step to removing is parsing the string with `datetime.datetime.fromisoformat`.
-        #
-        # In python <3.11, `fromisoformat()` can only parse timestamps of millisecond (3 digit)
-        # or microsecond (6 digit) precision. It will error if passed any other number of fractional
-        # digits, so we extract the fractional seconds and pad to 6 digits before parsing.
-        ts_string = ts.name.strip()
-
-        # separate [date and time] from [fractional seconds and UTC offset]
-        ts_parts = ts_string.split(".")
-        if len(ts_parts) == 2:
-            # separate fractional seconds and UTC offset
-            offset_sep = "+" if "+" in ts_parts[1] else "-"
-            ts_frac_parts = ts_parts[1].split(offset_sep)
-            num_frac_parts = len(ts_frac_parts)
-
-            # pad to 6 digits if fractional seconds present
-            ts_frac_parts[0] = ts_frac_parts[0].ljust(6, "0")
-            ts_string = "".join(
-                [
-                    ts_parts[0],  # date and time
-                    ".",
-                    ts_frac_parts[0],  # fractional seconds
-                    offset_sep if num_frac_parts > 1 else "",
-                    (ts_frac_parts[1] if num_frac_parts > 1 else ""),  # utc offset (if present)
-                ]
-            )
-
-        # return literal with no timezone, eg turn '2020-01-01 12:13:14-08:00' into '2020-01-01 12:13:14'
-        # this is because Clickhouse encodes the timezone as a data type parameter and throws an error if
-        # it's part of the timestamp string
-        ts_without_tz = (
-            datetime.datetime.fromisoformat(ts_string).replace(tzinfo=None).isoformat(sep=" ")
-        )
-        ts = exp.Literal.string(ts_without_tz)
-
-    # Non-nullable DateTime64 with microsecond precision
-    expressions = [exp.DataTypeParam(this=tz)] if tz else []
-    datatype = exp.DataType.build(
-        exp.DataType.Type.DATETIME64,
-        expressions=[exp.DataTypeParam(this=exp.Literal.number(6)), *expressions],
-        nullable=False,
-    )
-
-    return self.sql(exp.cast(ts, datatype, dialect=self.dialect))
-
-
-def _map_sql(self: Exasol.Generator, expression: exp.Map | exp.VarMap) -> str:
-    if not (expression.parent and expression.parent.arg_key == "settings"):
-        return _lower_func(var_map_sql(self, expression))
-
-    keys = expression.args.get("keys")
-    values = expression.args.get("values")
-
-    if not isinstance(keys, exp.Array) or not isinstance(values, exp.Array):
-        self.unsupported("Cannot convert array columns into map.")
-        return ""
-
-    args = []
-    for key, value in zip(keys.expressions, values.expressions):
-        args.append(f"{self.sql(key)}: {self.sql(value)}")
-
-    csv_args = ", ".join(args)
-
-    return f"{{{csv_args}}}"
+    return f"TO_DATE({value_sql})"
 
 
 class Tokenizer(tokens.Tokenizer):
     IDENTIFIER_ESCAPES = ['"']
+    IDENTIFIER = ['"']
     STRING_ESCAPES = ["'"]
 
     KEYWORDS = {
@@ -181,36 +70,6 @@ class Tokenizer(tokens.Tokenizer):
         "TO": TokenType.COMMAND,
         "HASHTYPE": TokenType.UUID,
     }
-
-
-# def _build_truncate(args: t.List) -> exp.Div:
-#     """
-#     exasol TRUNC[ATE] (number): https://docs.exasol.com/db/latest/sql_references/functions/alphabeticallistfunctions/trunc[ate]%20(number).htm#TRUNC[ATE]_(number)
-#     example:
-#         exasol query: SELECT TRUNC(123.456,-2) -> 100
-#         generic query: SELECT FLOOR(123.456 * POWER(10,-2)) / POWER(10,-2) -> 100
-#     """
-#     number = seq_get(args, 0)
-#     truncate = seq_get(args, 1) or 0  # if no truncate arg then integer truncation
-#     sql = f"FLOOR({number} * POWER(10,{truncate})) / POWER(10,{truncate})"
-#     return parse_one(sql)
-# return exp.Div(
-#     this=exp.Floor(
-#         this=exp.Mul(
-#             this=exp.Literal(this=number,is_string=isinstance(number,str)),
-#             expression=exp.Pow(
-#                 this=exp.Literal(this=10,is_string=False),
-#                 expression=exp.Literal(this=truncate,is_string=isinstance(number,str)),
-#             ),
-#         )
-#     ),
-#     expression=exp.Pow(
-#         this=exp.Literal(this=10,is_string=False),
-#         expression=exp.Literal(this=truncate,is_string=isinstance(number,str)),
-#     ),
-#     # typed=???,
-#     # safe=???
-# )
 
 
 def _string_position_sql(self: Exasol.Generator, expression: exp.StrPosition) -> str:
@@ -229,7 +88,6 @@ def _string_position_sql(self: Exasol.Generator, expression: exp.StrPosition) ->
     substr = expression.args.get("substr")
     position = expression.args.get("position")
     occurrence = expression.args.get("occurrence")
-    print(substr, position, occurrence)
     # POSITION format
     if position is None and occurrence is None:
         return f"POSITION({self.sql(substr)} IN {self.sql(this)})"
@@ -251,6 +109,19 @@ def _string_position_sql(self: Exasol.Generator, expression: exp.StrPosition) ->
     return self.func("INSTR", this, substr, position, occurrence)
 
 
+def _date_diff_sql(self: Exasol.Generator, expression: exp.DateDiff) -> str:
+    # TODO proper error handling
+    # expression.unit can be exp.IntervalSpan
+    # but exasol can only work with certain units
+    assert isinstance(expression.unit, exp.Var)
+    unit = expression.text("unit").upper()
+    units = {"YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND"}
+    if unit not in units:
+        # exasol cannot work with other units
+        raise Exception()
+    return self.func(f"{unit}S_BETWEEN", expression.this, expression.expression)
+
+
 class Exasol(Dialect):
     ANNOTATORS = {
         **Dialect.ANNOTATORS,
@@ -262,51 +133,25 @@ class Exasol(Dialect):
     TIME_FORMAT = "'yyyy-MM-dd HH:mm:ss'"
 
     TIME_MAPPING = {
-        # --- Year ---
-        "YYYY": "%Y",  # 4-digit year (e.g., 2025)
-        "YYY": "%Y",  # 3-digit year (often same as YYYY in practice for TO_CHAR)
-        "YY": "%y",  # Last 2 digits of year (e.g., 25)
-        "Y": "%y",  # Last digit of year
-        # --- Month ---
-        "MM": "%m",  # Month (01-12)
-        "MON": "%b",  # Abbreviated month name (e.g., JAN)
-        "MONTH": "%B",  # Full month name (e.g., JANUARY)
-        "RM": "%m",  # Roman numeral month (no direct strftime, maps to decimal)
-        # --- Day ---
-        "DD": "%d",  # Day of month (01-31)
-        "DDD": "%j",  # Day of year (001-366)
-        "DY": "%a",  # Abbreviated weekday name (e.g., MON)
-        "DAY": "%A",  # Full weekday name (e.g., MONDAY)
-        "D": "%w",  # Day of week (1-7, 1=Sunday, matches %w; for ISO 8601 day, see ID)
-        # --- Hour ---
-        "HH24": "%H",  # Hour (00-23)
-        "HH12": "%I",  # Hour (01-12)
-        "HH": "%I",  # (alias for HH12)
-        "AM": "%p",  # AM/PM meridian indicator
-        "PM": "%p",  # AM/PM meridian indicator
-        # --- Minute ---
-        "MI": "%M",  # Minute (00-59)
-        # --- Second ---
-        "SS": "%S",  # Second (00-59)
-        # Fractional Seconds: Exasol uses FF[1-9]. strftime uses %f (microseconds)
-        "FF": "%f",  # Maps to microseconds. Precision (FF1-FF9) might need truncation/padding.
-        "FF1": "%f",
-        "FF2": "%f",
-        "FF3": "%f",  # Often used for milliseconds
-        "FF4": "%f",
-        "FF5": "%f",
-        "FF6": "%f",  # Microseconds
-        "FF7": "%f",
-        "FF8": "%f",
-        "FF9": "%f",
-        # --- Timezone ---
-        "TZH": "%z",  # Timezone hour offset (+/-HH)
-        "TZM": "%z",  # Timezone minute offset (often combined with TZH)
-        "TZHTZM": "%z",  # Combined timezone offset (+/-HHMM). Note: strftime %z is +/-HHMM or +/-HH:MM
-        # --- ISO 8601 Specific ---
-        "IYYY": "%G",  # ISO Year (4-digit)
-        "IW": "%V",  # ISO Week of year (01-53)
-        "ID": "%u",  # ISO Day of week (1-7, 1=Monday)
+        "YYYY": "%Y",  # 4-digit year
+        "YY": "%y",  # 2-digit year
+        "MM": "%m",  # 2-digit month
+        "MON": "%b",  # Abbreviated month name (JAN)
+        "MONTH": "%B",  # Full month name (JANUARY)
+        "DD": "%d",  # 2-digit day of month
+        "D": "%-d",  # Day of month (single digit without leading zero)
+        "DY": "%a",  # Abbreviated day of week (MON)
+        "DAY": "%A",  # Full day of week (MONDAY)
+        "HH24": "%H",  # 24-hour clock (00-23)
+        "HH": "%I",  # 12-hour clock (01-12)
+        "HH12": "%I",  # Alias for HH
+        "MI": "%M",  # Minutes (00-59)
+        "SS": "%S",  # Seconds (00-59)
+        "FF": "%f",  # Fractional seconds (microseconds)
+        "AM": "%p",  # Meridian indicator (AM/PM)
+        "PM": "%p",  # Meridian indicator (AM/PM)
+        # Additional patterns if needed
+        "TZH:TZM": "%z",  # Time zone offset (not always supported)
     }
 
     class Tokenizer(tokens.Tokenizer):
@@ -329,6 +174,9 @@ class Exasol(Dialect):
         }
 
         NUMERIC_FUNCTIONS = {
+            "TRUNC": exp.DateTrunc.from_arg_list,
+            "DIV": binary_from_function(exp.IntDiv),
+            "RANDOM": lambda args: exp.Rand(lower=seq_get(args, 0), upper=seq_get(args, 1)),
             ########### HANDLE IN GENERATOR ############
             # "MOD": a % b not allowed
             #       needs to be handled in generator
@@ -338,10 +186,7 @@ class Exasol(Dialect):
             #       see: tonumber_sql in sqlglot/generator.py
             #       see: https://docs.exasol.com/db/latest/sql_references/functions/alphabeticallistfunctions/to_number.htm#TO_NUMBER
             ########### HANDLE IN GENERATOR ############
-            "DIV": binary_from_function(exp.IntDiv),
-            "RANDOM": lambda args: exp.Rand(lower=seq_get(args, 0), upper=seq_get(args, 1)),
             # "TRUNCATE": _build_truncate,
-            # "TRUNC": _build_truncate,
             ########## NEED MORE RESEARCH ###########
             # "TO_CHAR": # exp.NumberToStr research formats
             # "MIN_SCALE": , # https://docs.exasol.com/db/latest/sql_references/functions/alphabeticallistfunctions/min_scale.htm
@@ -367,6 +212,8 @@ class Exasol(Dialect):
             **DATE_ADD_FUNCTIONS,
             **NUMERIC_FUNCTIONS,
             **STRING_FUNCTIONS,
+            "TO_CHAR": build_formatted_time(exp.TimeToStr, "exasol"),
+            "TO_DATE": exp.StrToDate,
         }
 
         CONSTRAINT_PARSERS = {
@@ -467,6 +314,12 @@ class Exasol(Dialect):
         # Whether the `name AS expr` schema/column constraint requires parentheses around `expr`
         WRAPPED_TRANSFORM_COLUMN_CONSTRAINT = True
 
+        def parse_function(self):
+            token = self._prev
+            func = super().parse_function()
+            func.set("original_name", token.text.upper())
+            return func
+
         def _match_lfp_or_fsp(self) -> bool:
             if self._match(TokenType.L_PAREN):
                 # TODO how to consume number
@@ -501,7 +354,6 @@ class Exasol(Dialect):
                 interval.unit.this == "DAY" or interval.unit.this == "YEAR"
             ):
                 unit = interval.unit.this
-
                 is_match = self._match_lfp_or_fsp()  # handle DAY(lfp) or YEAR(p)
                 if is_match and self._match_text_seq("TO"):
                     interval_unit = exp.IntervalSpan(
@@ -611,6 +463,7 @@ class Exasol(Dialect):
             exp.Unicode: lambda self, e: self.unicode_sql(e),
             # exp.Abs : rename_func("ABS"),
             exp.Anonymous: lambda self, e: self._anonymous_func(e),
+            # exp.Identifier: lambda self, e: self._identity(e),
             # exp.Acos: lambda self, e: f"ACOS({self.sql(e, 'this')})",
             # exp.DateAdd: rename_func(
             #     "ADD_DAYS"
@@ -621,7 +474,7 @@ class Exasol(Dialect):
             # exp.AddSeconds: lambda self, e: f"ADD_SECONDS({self._timestamp_literal(e, 'this')}, {self.sql(e, 'expression')})",
             # exp.AddWeeks: lambda self, e: f"ADD_WEEKS({self._timestamp_literal(e, 'this')}, {self.sql(e, 'expression')})",
             # exp.AddYears: lambda self, e: f"ADD_YEARS({self._timestamp_literal(e, 'this')}, {self.sql(e, 'expression')})",
-            exp.AnyValue: lambda self, e: self.windowed_func("ANY", e),
+            exp.Any: lambda self, e: self.windowed_func("ANY", e),
             exp.ApproxDistinct: unsupported_args("accuracy")(
                 rename_func("APPROXIMATE_COUNT_DISTINCT")
             ),
@@ -656,6 +509,8 @@ class Exasol(Dialect):
             # exp.ConnectByIsCycle: lambda self, e: "CONNECT_BY_ISCYCLE",
             # exp.ConnectByIsLeaf: lambda self, e: "CONNECT_BY_ISLEAF",
             # exp.SysConnectByPath: lambda self, e: f"SYS_CONNECT_BY_PATH({self.sql(e, 'this')}, {', '.join(self.sql(x) for x in e.expressions)})",
+            # exasol requires IS: https://docs.exasol.com/db/latest/sql/create_view.htm
+            exp.CommentColumnConstraint: lambda self, e: f"COMMENT IS {self.sql(e, 'this')}",
             exp.Command: lambda self, e: " ".join(self.sql(x) for x in e.expressions),
             # exp.Concat
             # exp.Convert
@@ -669,7 +524,7 @@ class Exasol(Dialect):
             exp.CovarSamp: rename_func("COVAR_SAMP"),
             # exp.CumeDist: lambda self, e: self.windowed_func("CUME_DIST"),
             # exp.CurrentCluster: lambda self, e: "CURRENT_CLUSTER",
-            exp.CurrentDate: rename_func("CURDATE"),
+            exp.CurrentDate: lambda self, e: "CURRENT_DATE",
             exp.CurrentSchema: lambda self, e: "CURRENT_SCHEMA",
             # exp.CurrentSession: lambda self, e: "CURRENT_SESSION",
             # exp.CurrentStatement: lambda self, e: "CURRENT_STATEMENT",
@@ -682,8 +537,9 @@ class Exasol(Dialect):
                 if e.args.get("this")
                 else "CURRENT_TIMESTAMP"
             ),
-            exp.DateTrunc: lambda self,
-            e: f"DATE_TRUNC({self.sql(e, 'this')}, {self._timestamp_literal(e, 'expression')})",
+            exp.DateDiff: _date_diff_sql,
+            exp.DateTrunc: lambda self, e: self._date_trunc_sql(e),
+            # exp.Explode: lambda self, e: self._explode_split_sql(e),
             # exp.Day
             # exp.DaysBetween: lambda self, e: f"DAYS_BETWEEN({self.sql(e, 'this')}, {self.sql(e, 'expression')})",
             exp.Date: lambda self, e: f"DATE {self.sql(e, 'this')}",
@@ -707,9 +563,19 @@ class Exasol(Dialect):
             #         )
             #     )
             # })",
+            exp.FromTimeZone: lambda self, e: self.func(
+                "CONVERT_TZ", e.this, e.args.get("zone"), "'UTC'"
+            ),
+            exp.AtTimeZone: lambda self, e: self.func(
+                "CONVERT_TZ",
+                e.this,
+                "'UTC'",
+                e.args.get("zone"),
+            ),
             exp.Levenshtein: unsupported_args("ins_cost", "del_cost", "sub_cost", "max_dist")(
                 rename_func("EDIT_DISTANCE")
             ),
+            exp.All: rename_func("EVERY"),
             # exp.Every: lambda self, e: f"EVERY({self.sql(e, 'this')})",
             exp.Extract: lambda self,
             e: f"EXTRACT({self.sql(e, 'expression')} FROM {self._timestamp_literal(e, 'this')})",
@@ -759,9 +625,7 @@ class Exasol(Dialect):
             #     + ")"
             # ),
             # exp.Iproc: lambda self, e: f"IPROC({self.sql(e, 'this')})",
-            exp.Is: lambda self, e: f"IS_{self.sql(e, 'type')}({self.sql(e, 'this')}"
-            + (f", {self.sql(e, 'expression')}" if e.args.get("expression") else "")
-            + ")",
+            exp.Is: lambda self, e: self.transform_is(e),
             exp.JSONBExtract: lambda self, e: self.jsonb_extract_sql(e),
             exp.JSONValue: lambda self, e: (
                 f"JSON_VALUE({self.sql(e, 'this')}, {self.sql(e, 'path')}"
@@ -825,7 +689,7 @@ class Exasol(Dialect):
             #     if e.args.get("trim_chars")
             #     else f"LTRIM({self.sql(e, 'this')})"
             # ),
-            # exp.Trim
+            exp.Trim: trim_sql,
             # exp.Max
             # exp.Median
             # exp.Min
@@ -873,6 +737,7 @@ class Exasol(Dialect):
                 f" WITHIN GROUP ({self.sql(e, 'order').strip()})"
                 f"{self.sql(e, 'over')}"
             ),
+            # exp.Pivot: no_pivot_sql,
             exp.Pow: rename_func("POWER"),
             exp.Rand: rename_func("RANDOM"),
             exp.RegexpExtract: rename_func("REGEXP_SUBSTR"),
@@ -892,9 +757,19 @@ class Exasol(Dialect):
             # exp.Substring
             # exp.Sum
             exp.Substring: lambda self, e: self.substring_sql(e),
+            exp.StrToDate: _str_to_date_sql,
+            exp.StrToTime: _str_to_time_sql,
             # exp.SysConnectByPath
             exp.ToChar: lambda self, e: self.to_char_sql(e),
-            exp.StrToDate: rename_func("TO_DATE"),
+            exp.TimeStrToDate: _str_to_date_sql,
+            exp.TimeStrToTime: timestrtotime_sql,
+            exp.TimeToStr: lambda self, e: self.func(
+                "TO_CHAR", e.this, self.format_time_to_string(e)
+            ),
+            exp.TsOrDsToDate: lambda self, e: self.sql(
+                exp.StrToTime(this=e.this, format=e.args.get("format"))
+            ),
+            # exp.StrToDate: lambda self, e: self._str_to_date_sql(e),
             exp.ToNumber: lambda self, e: self.tonumber_sql(e),
             # exp.Trim
             # exp.Trim: lambda self,e: self.trim_sql(e),
@@ -910,6 +785,10 @@ class Exasol(Dialect):
             # exp.Upper
         }
 
+        RESERVED_KEYWORDS = {
+            "DATE",
+        }
+
         PROPERTIES_LOCATION = {
             **generator.Generator.PROPERTIES_LOCATION,
             exp.OnCluster: exp.Properties.Location.POST_NAME,
@@ -917,6 +796,70 @@ class Exasol(Dialect):
             exp.ToTableProperty: exp.Properties.Location.POST_NAME,
             exp.VolatileProperty: exp.Properties.Location.UNSUPPORTED,
         }
+
+        def format_time_to_string(self, expression: exp.Expression) -> str:
+            if isinstance(expression, exp.TimeToStr):
+                fmt = expression.args.get("format")
+                if fmt and hasattr(fmt, "this"):
+                    return f"'{self._normalize_date_format(fmt.this)}'"
+            return "'YYYY-MM-DD'"
+
+        def wrap_to_date_if_date_col(self, expression):
+            if isinstance(expression, exp.Column) and expression.name.lower() == "date":
+                return exp.TimeStrToDate(
+                    this=expression.copy(),
+                    format=exp.Literal.string("YYYYMMDD"),
+                )
+            return expression
+
+        def ordered_sql(self, expression):
+            """
+            Custom ORDERED SQL generation that wraps 'date' columns with TO_DATE.
+            """
+            expression = expression.copy()
+            expression.set("this", self.wrap_to_date_if_date_col(expression.this))
+            return super().ordered_sql(expression)
+
+        def lt_sql(self, expression):
+            expression = expression.copy()
+            expression.set("this", self.wrap_to_date_if_date_col(expression.this))
+            return super().lt_sql(expression)
+
+        def lte_sql(self, expression):
+            expression = expression.copy()
+            expression.set("this", self.wrap_to_date_if_date_col(expression.this))
+            return super().lte_sql(expression)
+
+        def _normalize_date_format(self, fmt: str) -> str:
+            # If fmt contains Python style like '%Y%m%d', remove % and convert:
+            replacements = {
+                "%Y": "YYYY",
+                "%y": "YY",
+                "%m": "MM",
+                "%d": "DD",
+                "%a": "DY",
+                "%b": "MON",
+                "%B": "MONTH",
+                "%H": "HH24",
+                "%I": "HH12",
+                "%M": "MI",
+                "%S": "SS",
+                "%p": "AM",
+                # Add others if needed
+            }
+            for py_fmt, exa_fmt in replacements.items():
+                fmt = fmt.replace(py_fmt, exa_fmt)
+            return fmt
+
+        def columndef_sql(self, expression: exp.ColumnDef, sep: str = " ") -> str:
+            # Exasol does not support column-level comments in CREATE VIEW/CREATE TABLE
+            expression = expression.copy()
+            constraints = expression.args.get("constraints", [])
+            filtered_constraints = [
+                c for c in constraints if not isinstance(c.kind, exp.CommentColumnConstraint)
+            ]
+            expression.set("constraints", filtered_constraints)
+            return super().columndef_sql(expression, sep)
 
         def dateadd_sql(self, expression: exp.DateAdd) -> str:
             """
@@ -931,6 +874,32 @@ class Exasol(Dialect):
             func_name = f"ADD_{unit_name}s"  # Exasol expects plural (e.g., ADD_DAYS)
 
             return self.func(func_name, expression.this, expression.expression)
+
+        def transform_is(self, e: exp.Is) -> str:
+            this_sql = self.sql(e, "this")
+            expression = e.args.get("expression")
+            type_expr = e.args.get("type")
+
+            if type_expr:
+                # Use raw identifier name to avoid quotes like IS_"BOOLEAN"
+                type_str = (
+                    type_expr.this.upper()
+                    if isinstance(type_expr, exp.Identifier)
+                    else self.sql(type_expr).upper()
+                )
+                expr_sql = self.sql(expression) if expression else ""
+                return f"IS_{type_str}({this_sql}{', ' + expr_sql if expr_sql else ''})"
+
+            if isinstance(expression, exp.Null):
+                return f"{this_sql} IS NULL"
+
+            if isinstance(expression, exp.Boolean):
+                return f"{this_sql} IS {self.sql(expression)}"
+
+            if expression:
+                return f"{this_sql} IS {self.sql(expression)}"
+
+            return f"{this_sql} IS UNKNOWN"
 
         def _anonymous_func(self, e):
             func_name = e.this.upper()
@@ -956,14 +925,13 @@ class Exasol(Dialect):
                 # "NVL2": lambda e: self._render_func_with_args(e, expected_arg_count=3),
                 # Equivalent to CHARACTER_LENGTH AND LENGTH - https://docs.exasol.com/db/latest/sql_references/functions/alphabeticallistfunctions/octet_length.htm
                 "OCTET_LENGTH": lambda e: self._render_func_with_args(e, expected_arg_count=1),
-                "PERCENT_RANK": lambda e: self._render_func_with_args(e, expected_arg_count=0),
                 "PI": lambda e: self._render_func_with_args(e, expected_arg_count=0),
                 "POSIX_TIME": lambda e: self._render_func_with_args(e, expected_arg_count=1),
                 "RADIANS": lambda e: self._render_func_with_args(e, expected_arg_count=1),
                 # "RADIANS": lambda e: self._render_func_with_args(
                 #     e, expected_arg_count=1
                 # ),
-                "RANK": lambda e: self._render_func_with_args(e, expected_arg_count=0),
+                # "RANK": lambda e: self._render_func_with_args(e, expected_arg_count=0, ignore_extra_args_for={"RANK"}),
                 "RATIO_TO_REPORT": lambda e: self._render_func_with_args(e, expected_arg_count=1),
                 "REGEXP_INSTR": lambda e: self._render_func_with_args(
                     e, min_arg_count=2, max_arg_count=5
@@ -1086,6 +1054,17 @@ class Exasol(Dialect):
                 "TAN",
                 "TANH",
             ]
+
+            analytic_funcs = [
+                "RANK",
+                "DENSE_RANK",
+                "PERCENT_RANK",
+                "CUME_DIST",
+            ]
+            for name in analytic_funcs:
+                handlers[name] = lambda e, name=name: self._render_func_with_args(
+                    e, expected_arg_count=0, ignore_extra_args_for={name}
+                )
             for name in regr_funcs:
                 handlers[name] = lambda e: self._render_func_with_args(e, expected_arg_count=2)
             for name in trig_funcs:
@@ -1101,36 +1080,47 @@ class Exasol(Dialect):
             return f"{func_name}({', '.join(self.sql(arg) for arg in e.expressions)})"
 
         def _render_func_with_args(
-            self, e, expected_arg_count=None, min_arg_count=None, max_arg_count=None
+            self,
+            e,
+            expected_arg_count=None,
+            min_arg_count=None,
+            max_arg_count=None,
+            ignore_extra_args_for=None,
         ):
-            arg_count = len(e.expressions)
+            func_name = e.this.upper()
+            args = list(e.expressions)
+            ignore_extra_args_for = ignore_extra_args_for or set()
 
-            if expected_arg_count is not None and arg_count != expected_arg_count:
+            # Truncate extra args if allowed
+            if expected_arg_count is not None:
+                if func_name in ignore_extra_args_for and len(args) > expected_arg_count:
+                    args = args[:expected_arg_count]
+                elif len(args) != expected_arg_count:
+                    raise ValueError(
+                        f"{func_name} expects exactly {expected_arg_count} arguments, got {len(args)}"
+                    )
+
+            if min_arg_count is not None and len(args) < min_arg_count:
                 raise ValueError(
-                    f"{e.this} expects exactly {expected_arg_count} arguments, got {arg_count}"
+                    f"{func_name} expects at least {min_arg_count} arguments, got {len(args)}"
                 )
 
-            if min_arg_count is not None and arg_count < min_arg_count:
+            if max_arg_count is not None and len(args) > max_arg_count:
                 raise ValueError(
-                    f"{e.this} expects at least {min_arg_count} arguments, got {arg_count}"
+                    f"{func_name} expects at most {max_arg_count} arguments, got {len(args)}"
                 )
 
-            if max_arg_count is not None and arg_count > max_arg_count:
-                raise ValueError(
-                    f"{e.this} expects at most {max_arg_count} arguments, got {arg_count}"
-                )
+            formatted_args = ", ".join(self._format_func_arg(arg) for arg in args)
+            return f"{func_name}({formatted_args})"
 
-            def format_arg(arg):
-                if (
-                    isinstance(arg, exp.Literal)
-                    and isinstance(arg.this, str)
-                    and (arg.this.startswith("TIMESTAMP ") or arg.this.startswith("DATE "))
-                ):
-                    return arg.this
-                return self.sql(arg)
-
-            formatted_args = ", ".join(format_arg(arg) for arg in e.expressions)
-            return f"{e.this.upper()}({formatted_args})"
+        def _format_func_arg(self, arg):
+            if (
+                isinstance(arg, exp.Literal)
+                and isinstance(arg.this, str)
+                and (arg.this.startswith("TIMESTAMP ") or arg.this.startswith("DATE "))
+            ):
+                return arg.this
+            return self.sql(arg)
 
         def round_sql(self, expression):
             value = expression.this
@@ -1205,6 +1195,12 @@ class Exasol(Dialect):
         def dump_sql(self, expression: exp.Func) -> str:
             return self.func("DUMP", *expression.expressions)
 
+        def _date_trunc_sql(self, e: exp.DateTrunc) -> str:
+            unit_expr = e.args.get("unit") or e.this  # Fallback to .this if .unit not set
+            unit = self.sql(unit_expr).strip("'").lower()
+            value = self.sql(e.this)
+            return f"DATE_TRUNC('{unit}', {value})"
+
         def _timestamp_literal(self, e, key):
             arg = e.args.get(key)
             if isinstance(arg, exp.Literal) and arg.args.get("prefix"):
@@ -1266,16 +1262,6 @@ class Exasol(Dialect):
 
             return f"TO_CHAR({', '.join(formatted_args)})"
 
-        def convert_tz(self, e):
-            args = [
-                self.sql(e, "this"),
-                self.sql(e, "timezone"),
-                self.sql(e, "to_timezone"),
-            ]
-            if e.args.get("options"):
-                args.append(self.sql(e, "options"))
-            return f"CONVERT_TZ({', '.join(args)})"
-
         def cos_sql(self, expression):
             return f"COS({self.sql(expression, 'this')})"
 
@@ -1293,8 +1279,6 @@ class Exasol(Dialect):
             return f"{func_name}({self.sql(expression, 'this')})"
 
         def unicode_sql(self, expression):
-            print(expression)
-            print(expression.args)
             func_name = expression.args.get("sql_name") or expression.__class__._sql_names[0]
             return f"{func_name}({self.sql(expression, 'this')})"
 
@@ -1353,9 +1337,24 @@ class Exasol(Dialect):
 
         def cast_sql(self, expression: exp.Cast, safe_prefix: t.Optional[str] = None) -> str:
             this = expression.this
+            to_type = expression.to
 
-            if isinstance(this, exp.StrToDate) and expression.to == exp.DataType.build("datetime"):
+            # Handle casting STR_TO_DATE to DATETIME → just return the function
+            if isinstance(this, exp.StrToDate) and to_type == exp.DataType.build("datetime"):
                 return self.sql(this)
+
+            # Handle numeric → VARCHAR using TO_CHAR
+            if (
+                to_type
+                and isinstance(to_type, exp.DataType)
+                and to_type.this
+                in {
+                    exp.DataType.Type.VARCHAR,
+                    exp.DataType.Type.TEXT,
+                }
+                and isinstance(this, exp.Expression)
+            ):
+                return f"TO_CHAR({self.sql(this)})"
 
             return super().cast_sql(expression, safe_prefix=safe_prefix)
 
@@ -1402,40 +1401,6 @@ class Exasol(Dialect):
             # Manually add a flag to make the search case-insensitive
             regex = self.func("CONCAT", "'(?i)'", expression.expression)
             return self.func("match", expression.this, regex)
-
-        def datatype_sql(self, expression: exp.DataType) -> str:
-            # String is the standard ClickHouse type, every other variant is just an alias.
-            # Additionally, any supplied length parameter will be ignored.
-            #
-            # https://clickhouse.com/docs/en/sql-reference/data-types/string
-            if expression.this in self.STRING_TYPE_MAPPING:
-                # print(self.STRING_TYPE_MAPPING[expression.this])
-                dtype = self.STRING_TYPE_MAPPING[expression.this]
-            else:
-                dtype = super().datatype_sql(expression)
-
-            # This section changes the type to `Nullable(...)` if the following conditions hold:
-            # - It's marked as nullable - this ensures we won't wrap ClickHouse types with `Nullable`
-            #   and change their semantics
-            # - It's not the key type of a `Map`. This is because ClickHouse enforces the following
-            #   constraint: "Type of Map key must be a type, that can be represented by integer or
-            #   String or FixedString (possibly LowCardinality) or UUID or IPv6"
-            # - It's not a composite type, e.g. `Nullable(Array(...))` is not a valid type
-            # parent = expression.parent
-
-            # nullable = expression.args.get("nullable")
-            # if nullable is True or (
-            #     nullable is None
-            #     and not (
-            #         isinstance(parent, exp.DataType)
-            #         and parent.is_type(exp.DataType.Type.MAP, check_nullable=True)
-            #         and expression.index in (None, 0)
-            #     )
-            #     and not expression.is_type(*self.NON_NULLABLE_TYPES, check_nullable=True)
-            # ):
-            #     dtype = f"Nullable({dtype})"
-
-            return dtype
 
         def cte_sql(self, expression: exp.CTE) -> str:
             if expression.args.get("scalar"):

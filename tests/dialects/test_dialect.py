@@ -11,6 +11,7 @@ from sqlglot import (
     parse_one,
 )
 from sqlglot.dialects import BigQuery, Hive, Snowflake
+from sqlglot.dialects.dialect import Version
 from sqlglot.parser import logger as parser_logger
 
 
@@ -134,12 +135,23 @@ class TestDialect(Validator):
             "oracle, normalization_strategy = lowercase, version = 19.5"
         )
         self.assertEqual(oracle_with_settings.normalization_strategy.value, "LOWERCASE")
-        self.assertEqual(oracle_with_settings.settings, {"version": "19.5"})
+        self.assertEqual(oracle_with_settings.version, Version("19.5"))
 
-        bool_settings = Dialect.get_or_raise("oracle, s1=TruE, s2=1, s3=FaLse, s4=0, s5=nonbool")
+        class MyDialect(Dialect):
+            SUPPORTED_SETTINGS = {"s1", "s2", "s3", "s4", "s5"}
+
+        bool_settings = Dialect.get_or_raise("mydialect, s1=TruE, s2=1, s3=FaLse, s4=0, s5=nonbool")
         self.assertEqual(
             bool_settings.settings,
             {"s1": True, "s2": True, "s3": False, "s4": False, "s5": "nonbool"},
+        )
+
+        with self.assertRaises(ValueError) as cm:
+            Dialect.get_or_raise("tsql,normalisation_strategy=case_sensitive")
+
+        self.assertEqual(
+            "Unknown setting 'normalisation_strategy'. Did you mean normalization_strategy?",
+            str(cm.exception),
         )
 
     def test_compare_dialects(self):
@@ -170,7 +182,9 @@ class TestDialect(Validator):
 
     def test_compare_dialect_versions(self):
         ddb_v1 = Dialect.get_or_raise("duckdb, version=1.0")
-        ddb_v1_2 = Dialect.get_or_raise("duckdb, foo=bar, version=1.0")
+        ddb_v1_2 = Dialect.get_or_raise(
+            "duckdb, normalization_strategy=case_sensitive, version=1.0"
+        )
         ddb_v2 = Dialect.get_or_raise("duckdb, version=2.2.4")
         ddb_latest = Dialect.get_or_raise("duckdb")
 
@@ -447,6 +461,16 @@ class TestDialect(Validator):
         self.validate_all(
             "CAST('127.0.0.1/32' AS INET)",
             read={"postgres": "INET '127.0.0.1/32'"},
+        )
+        self.assertIsNotNone(
+            self.validate_identity("CREATE TABLE foo (bar INT AS (foo))").find(
+                exp.ComputedColumnConstraint
+            )
+        )
+        self.assertIsNotNone(
+            self.validate_identity(
+                "CREATE TABLE foo (t1 INT, t2 INT, bar INT AS (t1 * t2 * 2))"
+            ).find(exp.ComputedColumnConstraint)
         )
 
     def test_ddl(self):
@@ -1289,6 +1313,32 @@ class TestDialect(Validator):
                 "presto": "REDUCE(x, 0, (acc, x) -> acc + x, acc -> acc)",
             },
         )
+
+        self.validate_all(
+            "ARRAY_INTERSECT(x, y)",
+            read={
+                "hive": "ARRAY_INTERSECT(x, y)",
+                "spark2": "ARRAY_INTERSECT(x, y)",
+                "spark": "ARRAY_INTERSECT(x, y)",
+                "databricks": "ARRAY_INTERSECT(x, y)",
+                "presto": "ARRAY_INTERSECT(x, y)",
+                "trino": "ARRAY_INTERSECT(x, y)",
+                "snowflake": "ARRAY_INTERSECTION(x, y)",
+                "starrocks": "ARRAY_INTERSECT(x, y)",
+            },
+            write={
+                "hive": "ARRAY_INTERSECT(x, y)",
+                "spark2": "ARRAY_INTERSECT(x, y)",
+                "spark": "ARRAY_INTERSECT(x, y)",
+                "databricks": "ARRAY_INTERSECT(x, y)",
+                "presto": "ARRAY_INTERSECT(x, y)",
+                "trino": "ARRAY_INTERSECT(x, y)",
+                "snowflake": "ARRAY_INTERSECTION(x, y)",
+                "starrocks": "ARRAY_INTERSECT(x, y)",
+            },
+        )
+
+        self.validate_identity("SELECT ARRAY_INTERSECT(x, y, z)")
 
     def test_order_by(self):
         self.validate_identity(
@@ -2175,6 +2225,21 @@ class TestDialect(Validator):
                 "presto": "a % (b + 1)",
                 "snowflake": "a % (b + 1)",
                 "bigquery": "MOD(a, b + 1)",
+            },
+        )
+        self.validate_all(
+            "ARRAY_REMOVE(the_array, target)",
+            write={
+                "": "ARRAY_REMOVE(the_array, target)",
+                "clickhouse": "arrayFilter(_u -> _u <> target, the_array)",
+                "duckdb": "LIST_FILTER(the_array, _u -> _u <> target)",
+                "bigquery": "ARRAY(SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target)",
+                "hive": "ARRAY_REMOVE(the_array, target)",
+                "postgres": "ARRAY_REMOVE(the_array, target)",
+                "presto": "ARRAY_REMOVE(the_array, target)",
+                "starrocks": "ARRAY_REMOVE(the_array, target)",
+                "databricks": "ARRAY_REMOVE(the_array, target)",
+                "snowflake": "ARRAY_REMOVE(the_array, target)",
             },
         )
 

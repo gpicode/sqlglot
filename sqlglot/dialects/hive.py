@@ -557,6 +557,7 @@ class Hive(Dialect):
             exp.GenerateDateArray: sequence_sql,
             exp.If: if_sql(),
             exp.ILike: no_ilike_sql,
+            exp.IntDiv: lambda self, e: self.binary(e, "DIV"),
             exp.IsNan: rename_func("ISNAN"),
             exp.JSONExtract: lambda self, e: self.func("GET_JSON_OBJECT", e.this, e.expression),
             exp.JSONExtractScalar: lambda self, e: self.func(
@@ -740,6 +741,17 @@ class Hive(Dialect):
                     values.append(e)
 
             return self.func("STRUCT", *values)
+
+        def columndef_sql(self, expression: exp.ColumnDef, sep: str = " ") -> str:
+            return super().columndef_sql(
+                expression,
+                sep=(
+                    ": "
+                    if isinstance(expression.parent, exp.DataType)
+                    and expression.parent.is_type("struct")
+                    else sep
+                ),
+            )
 
         def alterset_sql(self, expression: exp.AlterSet) -> str:
             exprs = self.expressions(expression, flat=True)

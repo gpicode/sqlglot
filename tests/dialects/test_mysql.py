@@ -90,6 +90,20 @@ class TestMySQL(Validator):
             "CREATE TABLE test_table (id INT AUTO_INCREMENT, PRIMARY KEY (id) USING HASH)"
         )
         self.validate_identity(
+            "CREATE TABLE test (a INT, b INT GENERATED ALWAYS AS (a + a) STORED)"
+        )
+        self.validate_identity(
+            "CREATE TABLE test (a INT, b INT GENERATED ALWAYS AS (a + a) VIRTUAL)"
+        )
+        self.validate_identity(
+            "CREATE TABLE test (a INT, b INT AS (a + a) STORED)",
+            "CREATE TABLE test (a INT, b INT GENERATED ALWAYS AS (a + a) STORED)",
+        )
+        self.validate_identity(
+            "CREATE TABLE test (a INT, b INT AS (a + a) VIRTUAL)",
+            "CREATE TABLE test (a INT, b INT GENERATED ALWAYS AS (a + a) VIRTUAL)",
+        )
+        self.validate_identity(
             "/*left*/ EXPLAIN SELECT /*hint*/ col FROM t1 /*right*/",
             "/* left */ DESCRIBE /* hint */ SELECT col FROM t1 /* right */",
         )
@@ -111,7 +125,7 @@ class TestMySQL(Validator):
         )
         self.validate_identity(
             "CREATE TABLE test (ts TIMESTAMP, ts_tz TIMESTAMPTZ, ts_ltz TIMESTAMPLTZ)",
-            "CREATE TABLE test (ts DATETIME, ts_tz TIMESTAMP, ts_ltz TIMESTAMP)",
+            "CREATE TABLE test (ts TIMESTAMP, ts_tz TIMESTAMP, ts_ltz TIMESTAMP)",
         )
         self.validate_identity(
             "ALTER TABLE test_table ALTER COLUMN test_column SET DATA TYPE LONGTEXT",
@@ -298,7 +312,7 @@ class TestMySQL(Validator):
         )
         self.validate_identity(
             "CAST(x AS TIMESTAMP)",
-            "CAST(x AS DATETIME)",
+            "TIMESTAMP(x)",
         )
         self.validate_identity(
             "CAST(x AS TIMESTAMPTZ)",

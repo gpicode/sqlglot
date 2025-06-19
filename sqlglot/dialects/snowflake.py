@@ -31,6 +31,7 @@ from sqlglot.dialects.dialect import (
 )
 from sqlglot.generator import unsupported_args
 from sqlglot.helper import flatten, is_float, is_int, seq_get
+from sqlglot.optimizer.scope import find_all_in_scope
 from sqlglot.tokens import TokenType
 
 if t.TYPE_CHECKING:
@@ -333,6 +334,34 @@ def _json_extract_value_array_sql(
     return self.func("TRANSFORM", json_extract, transform_lambda)
 
 
+def _eliminate_dot_variant_lookup(expression: exp.Expression) -> exp.Expression:
+    if isinstance(expression, exp.Select):
+        # This transformation is used to facilitate transpilation of BigQuery `UNNEST` operations
+        # to Snowflake. It should not affect roundtrip because `Unnest` nodes cannot be produced
+        # by Snowflake's parser.
+        #
+        # Additionally, at the time of writing this, BigQuery is the only dialect that produces a
+        # `TableAlias` node that only fills `columns` and not `this`, due to `UNNEST_COLUMN_ONLY`.
+        unnest_aliases = set()
+        for unnest in find_all_in_scope(expression, exp.Unnest):
+            unnest_alias = unnest.args.get("alias")
+            if (
+                isinstance(unnest_alias, exp.TableAlias)
+                and not unnest_alias.this
+                and len(unnest_alias.columns) == 1
+            ):
+                unnest_aliases.add(unnest_alias.columns[0].name)
+
+        if unnest_aliases:
+            for c in find_all_in_scope(expression, exp.Column):
+                if c.table in unnest_aliases:
+                    bracket_lhs = c.args["table"]
+                    bracket_rhs = exp.Literal.string(c.name)
+                    c.replace(exp.Bracket(this=bracket_lhs, expressions=[bracket_rhs]))
+
+    return expression
+
+
 class Snowflake(Dialect):
     # https://docs.snowflake.com/en/sql-reference/identifiers-syntax
     NORMALIZATION_STRATEGY = NormalizationStrategy.UPPERCASE
@@ -370,6 +399,11 @@ class Snowflake(Dialect):
         "ss": "%S",
         "FF6": "%f",
         "ff6": "%f",
+    }
+
+    DATE_PART_MAPPING = {
+        **Dialect.DATE_PART_MAPPING,
+        "ISOWEEK": "WEEKISO",
     }
 
     def quote_identifier(self, expression: E, identify: bool = True) -> E:
@@ -858,8 +892,14 @@ class Snowflake(Dialect):
                 properties=self._parse_properties(),
             )
 
-        def _parse_get(self) -> exp.Get | exp.Command:
+        def _parse_get(self) -> t.Optional[exp.Expression]:
             start = self._prev
+
+            # If we detect GET( then we need to parse a function, not a statement
+            if self._match(TokenType.L_PAREN):
+                self._retreat(self._index - 2)
+                return self._parse_expression()
+
             target = self._parse_location_path()
 
             # Parse as command if unquoted file path
@@ -1012,9 +1052,9 @@ class Snowflake(Dialect):
             exp.ApproxDistinct: rename_func("APPROX_COUNT_DISTINCT"),
             exp.ArgMax: rename_func("MAX_BY"),
             exp.ArgMin: rename_func("MIN_BY"),
-            exp.Array: inline_array_sql,
             exp.ArrayConcat: lambda self, e: self.arrayconcat_sql(e, name="ARRAY_CAT"),
             exp.ArrayContains: lambda self, e: self.func("ARRAY_CONTAINS", e.expression, e.this),
+            exp.ArrayIntersect: rename_func("ARRAY_INTERSECTION"),
             exp.AtTimeZone: lambda self, e: self.func(
                 "CONVERT_TIMEZONE", e.args.get("zone"), e.this
             ),
@@ -1033,7 +1073,9 @@ class Snowflake(Dialect):
             exp.DayOfWeekIso: rename_func("DAYOFWEEKISO"),
             exp.DayOfYear: rename_func("DAYOFYEAR"),
             exp.Explode: rename_func("FLATTEN"),
-            exp.Extract: rename_func("DATE_PART"),
+            exp.Extract: lambda self, e: self.func(
+                "DATE_PART", map_date_part(e.this, self.dialect), e.expression
+            ),
             exp.FileFormatProperty: lambda self,
             e: f"FILE_FORMAT=({self.expressions(e, 'expressions', sep=' ')})",
             exp.FromTimeZone: lambda self, e: self.func(
@@ -1083,16 +1125,20 @@ class Snowflake(Dialect):
                     transforms.explode_projection_to_unnest(),
                     transforms.eliminate_semi_and_anti_joins,
                     _transform_generate_date_array,
+                    _eliminate_dot_variant_lookup,
                 ]
             ),
             exp.SHA: rename_func("SHA1"),
             exp.StarMap: rename_func("OBJECT_CONSTRUCT"),
             exp.StartsWith: rename_func("STARTSWITH"),
+            exp.EndsWith: rename_func("ENDSWITH"),
             exp.StrPosition: lambda self, e: strposition_sql(
                 self, e, func_name="CHARINDEX", supports_position=True
             ),
             exp.StrToDate: lambda self, e: self.func("DATE", e.this, self.format_time(e)),
+            exp.StringToArray: rename_func("STRTOK_TO_ARRAY"),
             exp.Stuff: rename_func("INSERT"),
+            exp.StPoint: rename_func("ST_MAKEPOINT"),
             exp.TimeAdd: date_delta_sql("TIMEADD"),
             exp.Timestamp: no_timestamp_sql,
             exp.TimestampAdd: date_delta_sql("TIMESTAMPADD"),
@@ -1153,6 +1199,8 @@ class Snowflake(Dialect):
             exp.Struct,
             exp.VarMap,
         }
+
+        RESPECT_IGNORE_NULLS_UNSUPPORTED_EXPRESSIONS = (exp.ArrayAgg,)
 
         def with_properties(self, properties: exp.Properties) -> str:
             return self.properties(properties, wrapped=False, prefix=self.sep(""), sep=" ")
@@ -1224,13 +1272,15 @@ class Snowflake(Dialect):
             unnest_alias = expression.args.get("alias")
             offset = expression.args.get("offset")
 
+            unnest_alias_columns = unnest_alias.columns if unnest_alias else []
+            value = seq_get(unnest_alias_columns, 0) or exp.to_identifier("value")
+
             columns = [
                 exp.to_identifier("seq"),
                 exp.to_identifier("key"),
                 exp.to_identifier("path"),
                 offset.pop() if isinstance(offset, exp.Expression) else exp.to_identifier("index"),
-                seq_get(unnest_alias.columns if unnest_alias else [], 0)
-                or exp.to_identifier("value"),
+                value,
                 exp.to_identifier("this"),
             ]
 
@@ -1246,7 +1296,9 @@ class Snowflake(Dialect):
             explode = f"TABLE(FLATTEN({table_input}))"
             alias = self.sql(unnest_alias)
             alias = f" AS {alias}" if alias else ""
-            return f"{explode}{alias}"
+            value = "" if isinstance(expression.parent, (exp.From, exp.Join)) else f"{value} FROM "
+
+            return f"{value}{explode}{alias}"
 
         def show_sql(self, expression: exp.Show) -> str:
             terse = "TERSE " if expression.args.get("terse") else ""
@@ -1292,7 +1344,14 @@ class Snowflake(Dialect):
             start = f" START {start}" if start else ""
             increment = expression.args.get("increment")
             increment = f" INCREMENT {increment}" if increment else ""
-            return f"AUTOINCREMENT{start}{increment}"
+
+            order = expression.args.get("order")
+            if order is not None:
+                order_clause = " ORDER" if order else " NOORDER"
+            else:
+                order_clause = ""
+
+            return f"AUTOINCREMENT{start}{increment}{order_clause}"
 
         def cluster_sql(self, expression: exp.Cluster) -> str:
             return f"CLUSTER BY ({self.expressions(expression, flat=True)})"
@@ -1398,3 +1457,45 @@ class Snowflake(Dialect):
                 return f"{this_name}{self.sep()}{copy_grants}{this_schema}"
 
             return super().createable_sql(expression, locations)
+
+        def arrayagg_sql(self, expression: exp.ArrayAgg) -> str:
+            this = expression.this
+
+            # If an ORDER BY clause is present, we need to remove it from ARRAY_AGG
+            # and add it later as part of the WITHIN GROUP clause
+            order = this if isinstance(this, exp.Order) else None
+            if order:
+                expression.set("this", order.this.pop())
+
+            expr_sql = super().arrayagg_sql(expression)
+
+            if order:
+                expr_sql = self.sql(exp.WithinGroup(this=expr_sql, expression=order))
+
+            return expr_sql
+
+        def array_sql(self, expression: exp.Array) -> str:
+            expressions = expression.expressions
+
+            first_expr = seq_get(expressions, 0)
+            if isinstance(first_expr, exp.Select):
+                # SELECT AS STRUCT foo AS alias_foo -> ARRAY_AGG(OBJECT_CONSTRUCT('alias_foo', foo))
+                if first_expr.text("kind").upper() == "STRUCT":
+                    object_construct_args = []
+                    for expr in first_expr.expressions:
+                        # Alias case: SELECT AS STRUCT foo AS alias_foo -> OBJECT_CONSTRUCT('alias_foo', foo)
+                        # Column case: SELECT AS STRUCT foo -> OBJECT_CONSTRUCT('foo', foo)
+                        name = expr.this if isinstance(expr, exp.Alias) else expr
+
+                        object_construct_args.extend([exp.Literal.string(expr.alias_or_name), name])
+
+                    array_agg = exp.ArrayAgg(
+                        this=_build_object_construct(args=object_construct_args)
+                    )
+
+                    first_expr.set("kind", None)
+                    first_expr.set("expressions", [array_agg])
+
+                    return self.sql(first_expr.subquery())
+
+            return inline_array_sql(self, expression)

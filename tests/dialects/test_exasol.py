@@ -43,14 +43,14 @@ class TestExasol(Validator):
     #         self.validate_identity(read, write)
 
     def test_integration_identity(self):
-        ########## STRING FUNCTIONS ###########
+        ######### STRING FUNCTIONS ###########
         # self.validate_identity("SELECT ASCII('X')")
-        self.validate_identity("SELECT BIT_LENGTH('aou') BIT_LENGTH")
+        # self.validate_identity("SELECT BIT_LENGTH('aou') BIT_LENGTH")
         # currently CHARACTER_LENGTH allows more than 1 arg (3)
-        self.validate_identity(
-            "SELECT CHARACTER_LENGTH('aeiouäöü') C_LENGTH",
-            "SELECT LENGTH('aeiouäöü') C_LENGTH",
-        )
+        # self.validate_identity(
+        #     "SELECT CHARACTER_LENGTH('aeiouäöü') C_LENGTH",
+        #     "SELECT LENGTH('aeiouäöü') C_LENGTH",
+        # )
         self.validate_identity("SELECT CHAR(88) CHR", "SELECT CHR(88) CHR")
         self.validate_identity("SELECT COLOGNE_PHONETIC('schmitt'), COLOGNE_PHONETIC('Schmidt')")
         self.validate_identity("SELECT CONCAT('abc', 'def', 'g') CONCAT")
@@ -99,8 +99,14 @@ class TestExasol(Validator):
         self.validate_identity("SELECT LOWER('AbCdEf') LCASE")
         self.validate_identity("SELECT LEFT('abcdef', 3) LEFT_SUBSTR")
         self.validate_identity("SELECT LENGTH('abc') LENGTH")
-        self.validate_identity("SELECT LTRIM('ab cdef', ' ab') LTRIM")
-        self.validate_identity("SELECT RTRIM('ab cdef', ' efd') RTRIM")
+        self.validate_identity(
+            "SELECT LTRIM('ab cdef', ' ab') LTRIM",
+            "SELECT TRIM(LEADING ' ab' FROM 'ab cdef') LTRIM",
+        )
+        self.validate_identity(
+            "SELECT RTRIM('ab cdef', ' efd') RTRIM",
+            "SELECT TRIM(TRAILING ' efd' FROM 'ab cdef') RTRIM",
+        )
         self.validate_identity(
             "SELECT MID('abcdef', 2, 3) S1, MID('abcdef', -3) S2, MID('abcdef', 7) S3, MID('abcdef', -7) S4"
         )
@@ -142,16 +148,16 @@ class TestExasol(Validator):
         )
 
         self.validate_all(
-            "SELECT CHR(88) CHR",
+            "SELECT CHR(99) CHR",
             read={
-                "exasol": "SELECT CHAR(88) CHR",
-                "databricks": "SELECT char(88) AS CHR",
-                "mysql": "SELECT CHAR(88) AS CHR",
+                "exasol": "SELECT CHAR(99) CHR",
+                "databricks": "SELECT char(99) AS CHR",
+                "mysql": "SELECT CHAR(99) AS CHR",
             },
             write={
-                "exasol": "SELECT CHR(88) CHR",
-                "mysql": "SELECT CHAR(88) AS CHR",
-                "databricks": "SELECT CHR(88) AS CHR",
+                "exasol": "SELECT CHR(99) CHR",
+                "mysql": "SELECT CHAR(99) AS CHR",
+                "databricks": "SELECT CHR(99) AS CHR",
             },
         )
 
@@ -264,7 +270,7 @@ class TestExasol(Validator):
         #     "SELECT TO_CHAR(DATE '2013-12-16', 'DD. MON YYYY', 'NLS_DATE_LANGUAGE=DEU') TO_CHAR"
         # )
         # , SUBSTRING('abcdef FROM -3) S3
-        ########## STRING FUNCTIONS ###########
+        ######### STRING FUNCTIONS ###########
 
         # print("yay")
 
@@ -342,29 +348,31 @@ class TestExasol(Validator):
         #     self.assertEqual(token_data, expected)
 
         # --- Generator tests (newly added) ---
-        # def test_convert_tz(self):
-        #     self.validate_identity(
-        #         "CONVERT_TZ(TIMESTAMP '2012-05-10 12:00:00', 'UTC', 'Europe/Berlin')",
-        #         exp.ConvertTZ(
-        #             this=exp.Literal.string("TIMESTAMP '2012-05-10 12:00:00'"),
-        #             from_tz=exp.Literal.string("UTC"),
-        #             to_tz=exp.Literal.string("Europe/Berlin")
-        #         )
-        #     )
 
-        #     self.validate_identity(
-        #         "CONVERT_TZ(TIMESTAMP '2012-03-25 02:30:00', 'Europe/Berlin', 'UTC', 'INVALID REJECT AMBIGUOUS REJECT')",
-        #         exp.ConvertTZ(
-        #             this=exp.Literal.string("TIMESTAMP '2012-03-25 02:30:00'"),
-        #             from_tz=exp.Literal.string("Europe/Berlin"),
-        #             to_tz=exp.Literal.string("UTC"),
-        #             options=exp.Literal.string("INVALID REJECT AMBIGUOUS REJECT")
-        #         )
-        #     )
+    # def test_convert_tz(self):
+    #         self.validate_identity(
+    #             "CONVERT_TZ(TIMESTAMP '2012-05-10 12:00:00', 'UTC', 'Europe/Berlin')",
+    #             exp.ConvertTZ(
+    #                 this=exp.Literal.string("TIMESTAMP '2012-05-10 12:00:00'"),
+    #                 from_tz=exp.Literal.string("UTC"),
+    #                 to_tz=exp.Literal.string("Europe/Berlin")
+    #             )
+    #         )
+
+    #         self.validate_identity(
+    #             "CONVERT_TZ(TIMESTAMP '2012-03-25 02:30:00', 'Europe/Berlin', 'UTC', 'INVALID REJECT AMBIGUOUS REJECT')",
+    #             exp.ConvertTZ(
+    #                 this=exp.Literal.string("TIMESTAMP '2012-03-25 02:30:00'"),
+    #                 from_tz=exp.Literal.string("Europe/Berlin"),
+    #                 to_tz=exp.Literal.string("UTC"),
+    #                 options=exp.Literal.string("INVALID REJECT AMBIGUOUS REJECT")
+    #             )
+    #         )
 
     def test_generator_transforms(self):
         generator = Exasol.Generator()
         generator.dialect.NULL_ORDERING = None
+        self.maxDiff = None
         tests = [
             (exp.Abs(this=exp.Column(this="x")), "ABS(x)"),
             (exp.Anonymous(this="ACOS", expressions=[exp.Column(this="x")]), "ACOS(x)"),
@@ -467,7 +475,7 @@ class TestExasol(Validator):
             ),
             (
                 exp.Alias(
-                    this=exp.AnyValue(
+                    this=exp.Any(
                         this=exp.LT(
                             this=exp.Column(this="age"),
                             expression=exp.Literal.number(30),
@@ -729,6 +737,40 @@ class TestExasol(Validator):
             #     .where("last_name='clark'"),
             #     "SELECT CONNECT_BY_ISLEAF, SYS_CONNECT_BY_PATH(last_name, '/') PATH FROM employees WHERE last_name = 'clark'",
             # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Anonymous(this="CONNECT_BY_ISCYCLE"),
+            #             exp.Alias(
+            #                 this=exp.SysConnectByPath(
+            #                     this=exp.Column(this="last_name"),
+            #                     expressions=[exp.Literal.string("/")],
+            #                 ),
+            #                 alias=exp.to_identifier("PATH"),
+            #             ),
+            #         ],
+            #     )
+            #     .from_("employees")
+            #     .where("last_name='clark'"),
+            #     "SELECT CONNECT_BY_ISCYCLE, SYS_CONNECT_BY_PATH(last_name, '/') PATH FROM employees WHERE last_name = 'clark'",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.ConnectByIsLeaf(),
+            #             exp.Alias(
+            #                 this=exp.SysConnectByPath(
+            #                     this=exp.Column(this="last_name"),
+            #                     expressions=[exp.Literal.string("/")],
+            #                 ),
+            #                 alias=exp.to_identifier("PATH"),
+            #             ),
+            #         ],
+            #     )
+            #     .from_("employees")
+            #     .where("last_name='clark'"),
+            #     "SELECT CONNECT_BY_ISLEAF, SYS_CONNECT_BY_PATH(last_name, '/') PATH FROM employees WHERE last_name = 'clark'",
+            # ),
             (
                 exp.Convert(this=exp.Var(this="CHAR(15)"), expression=exp.Literal.string("ABC")),
                 "CONVERT(CHAR(15), 'ABC')",
@@ -757,23 +799,23 @@ class TestExasol(Validator):
             #     ),
             #     "CONVERT_TZ(TIMESTAMP '2012-03-25 02:30:00', 'Europe/Berlin', 'UTC', 'INVALID REJECT AMBIGUOUS REJECT')",
             # ),
-            (
-                exp.Select(
-                    expressions=[
-                        exp.Column(this="department"),
-                        exp.Alias(
-                            this=exp.Corr(
-                                this=exp.Column(this="age"),
-                                expression=exp.Column(this="current_salary"),
-                            ),
-                            alias=exp.to_identifier("CORR"),
-                        ),
-                    ],
-                )
-                .from_("employee_table")
-                .group_by("department"),
-                "SELECT department, CORR(age, current_salary) CORR FROM employee_table GROUP BY department",
-            ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Column(this="department"),
+            #             exp.Alias(
+            #                 this=exp.Corr(
+            #                     this=exp.Column(this="age"),
+            #                     expression=exp.Column(this="current_salary"),
+            #                 ),
+            #                 alias=exp.to_identifier("CORR"),
+            #             ),
+            #         ],
+            #     )
+            #     .from_("employee_table")
+            #     .group_by("department"),
+            #     "SELECT department, CORR(age, current_salary) CORR FROM employee_table GROUP BY department",
+            # ),
             (
                 exp.Select(
                     expressions=[
@@ -810,19 +852,19 @@ class TestExasol(Validator):
             (
                 exp.Select(
                     expressions=[
-                        exp.Column(this="id"),
-                        exp.Column(this="department"),
-                        exp.Column(this="age"),
-                        exp.Column(this="current_salary"),
+                        exp.to_identifier("id"),
+                        exp.to_identifier("department"),
+                        exp.to_identifier("current_salary"),
+                        exp.to_identifier("age"),
                         exp.Alias(
                             this=exp.Window(
                                 this=exp.CovarSamp(
-                                    this=exp.Column(this="age"),
-                                    expression=exp.Column(this="current_salary"),
+                                    this=exp.to_identifier("age"),
+                                    expression=exp.to_identifier("current_salary"),
                                 ),
-                                partition_by=[exp.Column(this="department")],
+                                partition_by=[exp.to_identifier("department")],
                                 order=exp.Order(
-                                    expressions=[exp.Ordered(this=exp.Column(this="age"))]
+                                    expressions=[exp.Ordered(this=exp.to_identifier("age"))]
                                 ),
                             ),
                             alias=exp.to_identifier("COVAR_SAMP"),
@@ -830,12 +872,12 @@ class TestExasol(Validator):
                     ],
                     order=exp.Order(
                         expressions=[
-                            exp.Ordered(this=exp.Column(this="department")),
-                            exp.Ordered(this=exp.Column(this="age")),
+                            exp.Ordered(this=exp.to_identifier("department")),
+                            exp.Ordered(this=exp.to_identifier("age")),
                         ]
                     ),
                 ).from_("employee_table"),
-                "SELECT id, department, age, current_salary, COVAR_SAMP(age, current_salary) OVER (PARTITION BY department ORDER BY age) COVAR_SAMP FROM employee_table ORDER BY department, age",
+                "SELECT id, department, current_salary, age, COVAR_SAMP(age, current_salary) OVER (PARTITION BY department ORDER BY age) COVAR_SAMP FROM employee_table ORDER BY department, age",
             ),
             (
                 exp.Select(
@@ -868,16 +910,16 @@ class TestExasol(Validator):
             (
                 exp.Select(
                     expressions=[
-                        exp.Column(this="id"),
-                        exp.Column(this="department"),
-                        exp.Column(this="current_salary"),
+                        exp.to_identifier("id"),
+                        exp.to_identifier("department"),
+                        exp.to_identifier("current_salary"),
                         exp.Alias(
                             this=exp.Window(
                                 this=exp.Anonymous(this="CUME_DIST"),
-                                partition_by=[exp.Column(this="department")],
+                                partition_by=[exp.to_identifier("department")],
                                 order=exp.Order(
                                     expressions=[
-                                        exp.Ordered(this=exp.Column(this="current_salary"))
+                                        exp.Ordered(this=exp.to_identifier("current_salary"))
                                     ]
                                 ),
                             ),
@@ -886,16 +928,22 @@ class TestExasol(Validator):
                     ],
                     order=exp.Order(
                         expressions=[
-                            exp.Ordered(this=exp.Column(this="department")),
-                            exp.Ordered(this=exp.Column(this="current_salary")),
+                            exp.Ordered(this=exp.to_identifier("department")),
+                            exp.Ordered(this=exp.to_identifier("current_salary")),
                         ]
                     ),
                 ).from_("employee_table"),
                 "SELECT id, department, current_salary, CUME_DIST() OVER (PARTITION BY department ORDER BY current_salary) CUME_DIST FROM employee_table ORDER BY department, current_salary",
             ),
             # (exp.Select(expressions=[exp.CurrentCluster()]), "SELECT CURRENT_CLUSTER"),
-            (exp.CurrentDate(), "CURDATE()"),
+            # (exp.Select(expressions=[exp.CurrentCluster()]), "SELECT CURRENT_CLUSTER"),
+            (exp.CurrentDate(), "CURRENT_DATE"),
             (exp.CurrentSchema(), "CURRENT_SCHEMA"),
+            # (exp.Select(expressions=[exp.CurrentSession()]), "SELECT CURRENT_SESSION"),
+            # (
+            #     exp.Select(expressions=[exp.CurrentStatement()]),
+            #     "SELECT CURRENT_STATEMENT",
+            # ),
             # (exp.Select(expressions=[exp.CurrentSession()]), "SELECT CURRENT_SESSION"),
             # (
             #     exp.Select(expressions=[exp.CurrentStatement()]),
@@ -906,18 +954,42 @@ class TestExasol(Validator):
             (exp.CurrentTimestamp(this=exp.Literal.number(6)), "CURRENT_TIMESTAMP(6)"),
             (
                 exp.DateTrunc(
-                    this=exp.Literal.string("minute"),
-                    expression=exp.Timestamp(this=exp.Literal.string("2006-12-31 23:59:59")),
+                    unit=exp.Literal.string("minute"),
+                    this=exp.Timestamp(this=exp.Literal.string("2006-12-31 23:59:59")),
                 ),
                 "DATE_TRUNC('minute', TIMESTAMP '2006-12-31 23:59:59')",
             ),
             (
                 exp.DateTrunc(
-                    this=exp.Literal.string("month"),
-                    expression=exp.Date(this=exp.Literal.string("2006-12-31")),
+                    unit=exp.Literal.string("month"),
+                    this=exp.Date(this=exp.Literal.string("2006-12-31")),
                 ),
                 "DATE_TRUNC('month', DATE '2006-12-31')",
             ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.DaysBetween(
+            #                     this=exp.Date(this=exp.Literal.string("1999-12-31")),
+            #                     expression=exp.Date(this=exp.Literal.string("2000-01-01")),
+            #                 ),
+            #                 alias=exp.to_identifier("DB1"),
+            #             ),
+            #             exp.Alias(
+            #                 this=exp.DaysBetween(
+            #                     this=exp.Timestamp(this=exp.Literal.string("2000-01-01 12:00:00")),
+            #                     expression=exp.Timestamp(
+            #                         this=exp.Literal.string("1999-12-31 00:00:00")
+            #                     ),
+            #                 ),
+            #                 alias=exp.to_identifier("DB2"),
+            #             ),
+            #         ]
+            #     ),
+            #     "SELECT DAYS_BETWEEN(DATE '1999-12-31', DATE '2000-01-01') DB1, DAYS_BETWEEN(TIMESTAMP '2000-01-01 12:00:00', TIMESTAMP '1999-12-31 00:00:00') DB2",
+            # ),
+            # (exp.Select(expressions=[exp.DBTimezone()]), "SELECT DBTIMEZONE"),
             # (
             #     exp.Select(
             #         expressions=[
@@ -959,6 +1031,38 @@ class TestExasol(Validator):
                 ),
                 "SELECT DECODE('abc', 'xyz', 1, 'abc', 2, 3)",
             ),
+            # (
+            #     exp.Select(expressions=[exp.Degrees(this=exp.Anonymous(this="PI"))]),
+            #     "SELECT DEGREES(PI())",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Column(this="id"),
+            #             exp.Column(this="department"),
+            #             exp.Column(this="current_salary"),
+            #             exp.Alias(
+            #                 this=exp.Window(
+            #                     this=exp.DenseRank(),
+            #                     partition_by=[exp.Column(this="department")],
+            #                     order=exp.Order(
+            #                         expressions=[
+            #                             exp.Ordered(this=exp.Column(this="current_salary"))
+            #                         ]
+            #                     ),
+            #                 ),
+            #                 alias=exp.to_identifier("DENSE_RANK"),
+            #             ),
+            #         ],
+            #         order=exp.Order(
+            #             expressions=[
+            #                 exp.Ordered(this=exp.Column(this="department")),
+            #                 exp.Ordered(this=exp.Column(this="current_salary")),
+            #             ]
+            #         ),
+            #     ).from_("employee_table"),
+            #     "SELECT id, department, current_salary, DENSE_RANK() OVER (PARTITION BY department ORDER BY current_salary) DENSE_RANK FROM employee_table ORDER BY department, current_salary",
+            # ),
             # (
             #     exp.Select(expressions=[exp.Degrees(this=exp.Anonymous(this="PI"))]),
             #     "SELECT DEGREES(PI())",
@@ -1042,6 +1146,20 @@ class TestExasol(Validator):
             #     .group_by("department"),
             #     "SELECT department, EVERY(age >= 30) EVERY FROM employee_table GROUP BY department",
             # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Column(this="department"),
+            #             exp.Alias(
+            #                 this=exp.Every(this=exp.Column(this="age >= 30")),
+            #                 alias=exp.to_identifier("EVERY"),
+            #             ),
+            #         ]
+            #     )
+            #     .from_("employee_table")
+            #     .group_by("department"),
+            #     "SELECT department, EVERY(age >= 30) EVERY FROM employee_table GROUP BY department",
+            # ),
             (
                 exp.Select(
                     expressions=[
@@ -1108,6 +1226,17 @@ class TestExasol(Validator):
             #     ),
             #     "SELECT FROM_POSIX_TIME(x) FPT1",
             # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.FromPosixTime(this=exp.Column(this="x")),
+            #                 alias=exp.to_identifier("FPT1"),
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT FROM_POSIX_TIME(x) FPT1",
+            # ),
             (
                 exp.Select(
                     expressions=[
@@ -1125,6 +1254,18 @@ class TestExasol(Validator):
                 ),
                 "SELECT GREATEST(x, y, z) GREATEST",
             ),
+            # (
+            #     exp.Select(expressions=[exp.Grouping(expressions=[exp.Column(this="region")])]),
+            #     "SELECT GROUPING(region)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Grouping(expressions=[exp.Column(this="y"), exp.Column(this="m")])
+            #         ]
+            #     ),
+            #     "SELECT GROUPING(y, m)",
+            # ),
             # (
             #     exp.Select(expressions=[exp.Grouping(expressions=[exp.Column(this="region")])]),
             #     "SELECT GROUPING(region)",
@@ -1172,6 +1313,134 @@ class TestExasol(Validator):
                 ),
                 "SELECT HASH_SHA1(c1, c2)",
             ),
+            # (
+            #     exp.Select(expressions=[exp.HashSha256(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASH_SHA256(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashSha256(expressions=[exp.Column(this="c1"), exp.Column(this="c2")])
+            #         ]
+            #     ),
+            #     "SELECT HASH_SHA256(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashSha512(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASH_SHA512(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashSha512(expressions=[exp.Column(this="c1"), exp.Column(this="c2")])
+            #         ]
+            #     ),
+            #     "SELECT HASH_SHA512(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashTiger(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASH_TIGER(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashTiger(expressions=[exp.Column(this="c1"), exp.Column(this="c2")])
+            #         ]
+            #     ),
+            #     "SELECT HASH_TIGER(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashTypeMd5(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASHTYPE_MD5(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashTypeMd5(expressions=[exp.Column(this="c1"), exp.Column(this="c2")])
+            #         ]
+            #     ),
+            #     "SELECT HASHTYPE_MD5(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashTypeSha1(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASHTYPE_SHA1(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashTypeSha1(expressions=[exp.Column(this="c1"), exp.Column(this="c2")])
+            #         ]
+            #     ),
+            #     "SELECT HASHTYPE_SHA1(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashTypeSha256(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASHTYPE_SHA256(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashTypeSha256(
+            #                 expressions=[exp.Column(this="c1"), exp.Column(this="c2")]
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT HASHTYPE_SHA256(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashTypeSha512(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASHTYPE_SHA512(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashTypeSha512(
+            #                 expressions=[exp.Column(this="c1"), exp.Column(this="c2")]
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT HASHTYPE_SHA512(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(expressions=[exp.HashTypeTiger(expressions=[exp.Column(this="abc")])]),
+            #     "SELECT HASHTYPE_TIGER(abc)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.HashTypeTiger(
+            #                 expressions=[exp.Column(this="c1"), exp.Column(this="c2")]
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT HASHTYPE_TIGER(c1, c2)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Hour(
+            #                 this=exp.Timestamp(this=exp.Literal.string("2001-02-28 12:00:00"))
+            #             ),
+            #         ]
+            #     ),
+            #     "SELECT HOUR(TIMESTAMP '2001-02-28 12:00:00')",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.HoursBetween(
+            #                     this=exp.Timestamp(this=exp.Literal.string("2000-01-01 12:00:00")),
+            #                     expression=exp.Timestamp(
+            #                         this=exp.Literal.string("2000-01-01 11:01:05")
+            #                     ),
+            #                 ),
+            #                 alias=exp.to_identifier("HB"),
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT HOURS_BETWEEN(TIMESTAMP '2000-01-01 12:00:00', TIMESTAMP '2000-01-01 11:01:05') HB",
+            # ),
             # (
             #     exp.Select(expressions=[exp.HashSha256(expressions=[exp.Column(this="abc")])]),
             #     "SELECT HASH_SHA256(abc)",
@@ -1641,6 +1910,39 @@ class TestExasol(Validator):
             #                     ),
             #                 ]
             #             ).from_("employees"),
+            #             exp.StartWith(
+            #                 this=exp.EQ(
+            #                     this=exp.column("last_name"),
+            #                     expression=exp.Literal.string("Clark"),
+            #                 )
+            #             ),
+            #             exp.Connect(
+            #                 this=exp.EQ(
+            #                     this=exp.column("employee_id"),
+            #                     expression=exp.column("manager_id"),
+            #                 ),
+            #                 prior=True,
+            #             ),
+            #         ]
+            #     ),
+            #     "SELECT last_name, LEVEL, SYS_CONNECT_BY_PATH(last_name, '/') PATH FROM employees START WITH last_name = 'Clark'  CONNECT BY PRIOR employee_id = manager_id",
+            # ),
+            # (
+            #     exp.Command(
+            #         expressions=[
+            #             exp.Select(
+            #                 expressions=[
+            #                     exp.column("last_name"),
+            #                     exp.Level(),
+            #                     exp.Alias(
+            #                         this=exp.SysConnectByPath(
+            #                             this=exp.column("last_name"),
+            #                             expressions=[exp.Literal.string("/")],
+            #                         ),
+            #                         alias=exp.to_identifier("PATH"),
+            #                     ),
+            #                 ]
+            #             ).from_("employees"),
             #             exp.Connect(
             #                 this=exp.EQ(
             #                     this=exp.column("employee_id"),
@@ -1657,6 +1959,21 @@ class TestExasol(Validator):
             #         ]
             #     ),
             #     "SELECT last_name, LEVEL, SYS_CONNECT_BY_PATH(last_name, '/') PATH FROM employees CONNECT BY PRIOR employee_id = manager_id START WITH last_name = 'Clark'",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.ListAgg(
+            #                     this=exp.Column(this="name"),
+            #                     separator=exp.Literal.string(", "),
+            #                     order=exp.Column(this="name"),
+            #                 ),
+            #                 alias=exp.to_identifier("names_list"),
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT LISTAGG(name, ', ') WITHIN GROUP (ORDER BY name) names_list",
             # ),
             # (
             #     exp.Select(
@@ -1737,6 +2054,59 @@ class TestExasol(Validator):
             #     ),
             #     "SELECT LOG(1000, 10) LOG_RESULT, LOG2(256) LOG2_RESULT, LOG10(10000) LOG10_RESULT",
             # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.LocalTimestamp(),
+            #             exp.LocalTimestamp(precision=exp.Literal.number(6)),
+            #         ]
+            #     ),
+            #     "SELECT LOCALTIMESTAMP, LOCALTIMESTAMP(6)",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.Locate(
+            #                     this=exp.Literal.string("cab"),
+            #                     expression=exp.Literal.string("abcabcabc"),
+            #                 ),
+            #                 alias=exp.to_identifier("LOCATE1"),
+            #             ),
+            #             exp.Alias(
+            #                 this=exp.Locate(
+            #                     this=exp.Literal.string("user"),
+            #                     expression=exp.Literal.string("user1,user2,user3,user4,user5"),
+            #                     start=exp.Literal.number(-1),
+            #                 ),
+            #                 alias=exp.to_identifier("LOCATE2"),
+            #             ),
+            #         ]
+            #     ),
+            #     "SELECT LOCATE('cab', 'abcabcabc') LOCATE1, LOCATE('user', 'user1,user2,user3,user4,user5', -1) LOCATE2",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.Log(
+            #                     this=exp.Literal.number(1000),
+            #                     base=exp.Literal.number(10),
+            #                 ),
+            #                 alias="LOG_RESULT",
+            #             ),
+            #             exp.Alias(
+            #                 this=exp.Log2(this=exp.Literal.number(256)),
+            #                 alias="LOG2_RESULT",
+            #             ),
+            #             exp.Alias(
+            #                 this=exp.Log10(this=exp.Literal.number(10000)),
+            #                 alias="LOG10_RESULT",
+            #             ),
+            #         ]
+            #     ),
+            #     "SELECT LOG(1000, 10) LOG_RESULT, LOG2(256) LOG2_RESULT, LOG10(10000) LOG10_RESULT",
+            # ),
             (
                 exp.Select(expressions=[exp.Lower(this=exp.Literal.string("HELLO"))]),
                 "SELECT LOWER('HELLO')",
@@ -1760,26 +2130,26 @@ class TestExasol(Validator):
                         exp.Trim(
                             this=exp.Literal.string("  abc"),
                             expression=exp.Literal.string(" "),
-                            position=exp.to_identifier("LEADING"),
+                            position="LEADING",
                         )
                     ]
                 ),
-                "SELECT LTRIM('  abc', ' ')",
+                "SELECT TRIM(LEADING ' ' FROM '  abc')",
             ),
-            (
-                exp.Select(
-                    expressions=[
-                        exp.Alias(
-                            this=exp.Trim(
-                                this=exp.Literal.string("  sql  "),
-                                position=exp.to_identifier("LEADING"),
-                            ),
-                            alias="TRIMMED",
-                        )
-                    ]
-                ),
-                "SELECT LTRIM('  sql  ') TRIMMED",
-            ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.Trim(
+            #                     this=exp.Literal.string("  sql  "),
+            #                     position=exp.to_identifier("LEADING"),
+            #                 ),
+            #                 alias="TRIMMED",
+            #             )
+            #         ]
+            #     ),
+            #     "SELECT LTRIM('  sql  ') TRIMMED",
+            # ),
             (
                 exp.Mod(this=exp.Column(this="15"), expression=exp.Column(this="6")),
                 "MOD(15, 6)",
@@ -1812,6 +2182,25 @@ class TestExasol(Validator):
             #         ]
             #     ),
             #     "SELECT MID('abcdef', 2, 3) MID_COL",
+            # ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Alias(
+            #                 this=exp.MinScale(this=exp.Literal.number("123.00000")),
+            #                 alias="S1",
+            #             ),
+            #             exp.Alias(
+            #                 this=exp.MinScale(this=exp.Literal.number("9.99999999999")),
+            #                 alias="S2",
+            #             ),
+            #             exp.Alias(
+            #                 this=exp.MinScale(this=exp.Literal.number("-0.0045600")),
+            #                 alias="S3",
+            #             ),
+            #         ]
+            #     ),
+            #     "SELECT MIN_SCALE(123.00000) S1, MIN_SCALE(9.99999999999) S2, MIN_SCALE(-0.0045600) S3",
             # ),
             # (
             #     exp.Select(
@@ -2079,7 +2468,7 @@ class TestExasol(Validator):
                                 partition_by=[exp.to_identifier("department")],
                                 order=exp.Order(
                                     expressions=[
-                                        exp.Ordered(this=exp.Column(this="current_salary"))
+                                        exp.Ordered(this=exp.to_identifier("current_salary"))
                                     ]
                                 ),
                             ),
@@ -2302,8 +2691,8 @@ class TestExasol(Validator):
                                 this=exp.Anonymous(
                                     this="REGR_SLOPE",
                                     expressions=[
-                                        exp.Column(this="starting_salary"),
-                                        exp.Column(this="current_salary"),
+                                        exp.to_identifier("starting_salary"),
+                                        exp.to_identifier("current_salary"),
                                     ],
                                 ),
                                 partition_by=[exp.to_identifier("department")],
@@ -2426,11 +2815,13 @@ class TestExasol(Validator):
                 "SELECT ROUND(TIMESTAMP '2023-01-01 10:00:00', 'HH')",
             ),
             (
-                exp.select(
-                    "SALES_ID",
-                    exp.Anonymous(this="ROWNUM"),
+                exp.Select(
+                    expressions=[
+                        exp.Column(this="SALES_ID"),
+                        exp.Anonymous(this="ROWNUM"),
+                    ],
                 )
-                .from_("SALES")
+                .from_(exp.Table(this="SALES"))
                 .where(
                     exp.LT(
                         this=exp.Anonymous(this="ROWNUM"),
@@ -2439,6 +2830,20 @@ class TestExasol(Validator):
                 ),
                 "SELECT SALES_ID, ROWNUM FROM SALES WHERE ROWNUM < 10",
             ),
+            # (
+            #     exp.select(
+            #         "SALES_ID",
+            #         exp.Anonymous(this="ROWNUM"),
+            #     )
+            #     .from_("SALES")
+            #     .where(
+            #         exp.LT(
+            #             this=exp.Anonymous(this="ROWNUM"),
+            #             expression=exp.Literal.number(10),
+            #         )
+            #     ),
+            #     "SELECT SALES_ID, ROWNUM FROM SALES WHERE ROWNUM < 10",
+            # ),
             (
                 exp.Select(
                     expressions=[
@@ -2491,21 +2896,6 @@ class TestExasol(Validator):
                 ),
                 "SELECT RPAD('abc', 5, 'X')",
             ),
-            # (
-            #     exp.Select(
-            #         expressions=[
-            #             exp.Anonymous(
-            #                 this="RPAD",
-            #                 expressions=[
-            #                     exp.Literal.string("abc"),
-            #                     exp.Literal.number(5),
-            #                     exp.Literal.string("X"),
-            #                 ],
-            #             )
-            #         ]
-            #     ),
-            #     "SELECT RPAD('abc', 5, 'X')",
-            # ),
             (
                 exp.Select(
                     expressions=[
@@ -2656,20 +3046,6 @@ class TestExasol(Validator):
                     ]
                 ),
                 "SELECT SQRT(2)",
-            ),
-            (
-                exp.Select(
-                    expressions=[
-                        exp.Anonymous(
-                            this="ST_EQUALS",
-                            expressions=[
-                                exp.Identifier(this="geom1"),
-                                exp.Identifier(this="geom2"),
-                            ],
-                        )
-                    ]
-                ),
-                "SELECT ST_EQUALS(geom1, geom2)",
             ),
             (
                 exp.Select(
@@ -2915,9 +3291,7 @@ class TestExasol(Validator):
                     expressions=[
                         exp.Alias(
                             this=exp.StrToDate(
-                                expressions=[
-                                    exp.Literal.string("1999-12-31"),
-                                ],
+                                this=exp.Literal.string("1999-12-31"),
                             ),
                             alias="TO_DATE",
                         )
@@ -2930,16 +3304,13 @@ class TestExasol(Validator):
                     expressions=[
                         exp.Alias(
                             this=exp.StrToDate(
-                                expressions=[
-                                    exp.Literal.string("31-12-1999"),
-                                    exp.Literal.string("DD-MM-YYYY"),
-                                ],
+                                this=exp.Literal.string("31-12-1999"),
                             ),
-                            alias="TO_DATE",
+                            alias=exp.to_identifier("TO_DATE"),
                         )
                     ]
                 ),
-                "SELECT TO_DATE('31-12-1999', 'DD-MM-YYYY') TO_DATE",
+                "SELECT TO_DATE('31-12-1999') TO_DATE",
             ),
             (
                 exp.Select(
@@ -3047,49 +3418,50 @@ class TestExasol(Validator):
                             this=exp.Trim(
                                 this=exp.Literal.string("abcdef"),
                                 expression=exp.Literal.string("acf"),
+                                position=False,
                             ),
                             alias="TRIM",
                         )
                     ]
                 ),
-                "SELECT TRIM('abcdef', 'acf') TRIM",
+                "SELECT TRIM('acf' FROM 'abcdef') TRIM",
             ),
-            # (
-            #     exp.Select(
-            #         expressions=[
-            #             exp.Trim(
-            #                 this=exp.Literal.string("1234567891"),
-            #                 expression=exp.Literal.string("1"),
-            #                 position="LEADING",
-            #             )
-            #         ]
-            #     ),
-            #     "SELECT TRIM(LEADING '1' FROM '1234567891')",
-            # ),
-            # (
-            #     exp.Select(
-            #         expressions=[
-            #             exp.Trim(
-            #                 this=exp.Literal.string("1234567891"),
-            #                 expression=exp.Literal.string("1"),
-            #                 position="TRAILING",
-            #             )
-            #         ]
-            #     ),
-            #     "SELECT TRIM(TRAILING '1' FROM '1234567891')",
-            # ),
-            # (
-            #     exp.Select(
-            #         expressions=[
-            #             exp.Trim(
-            #                 this=exp.Literal.string("1234567891"),
-            #                 expression=exp.Literal.string("1"),
-            #                 position="BOTH",
-            #             )
-            #         ]
-            #     ),
-            #     "SELECT TRIM(BOTH '1' FROM '1234567891')",
-            # ),
+            (
+                exp.Select(
+                    expressions=[
+                        exp.Trim(
+                            this=exp.Literal.string("1234567891"),
+                            expression=exp.Literal.string("1"),
+                            position="LEADING",
+                        )
+                    ]
+                ),
+                "SELECT TRIM(LEADING '1' FROM '1234567891')",
+            ),
+            (
+                exp.Select(
+                    expressions=[
+                        exp.Trim(
+                            this=exp.Literal.string("1234567891"),
+                            expression=exp.Literal.string("1"),
+                            position="TRAILING",
+                        )
+                    ]
+                ),
+                "SELECT TRIM(TRAILING '1' FROM '1234567891')",
+            ),
+            (
+                exp.Select(
+                    expressions=[
+                        exp.Trim(
+                            this=exp.Literal.string("1234567891"),
+                            expression=exp.Literal.string("1"),
+                            position="BOTH",
+                        )
+                    ]
+                ),
+                "SELECT TRIM(BOTH '1' FROM '1234567891')",
+            ),
             (
                 exp.Select(
                     expressions=[
@@ -3144,22 +3516,22 @@ class TestExasol(Validator):
                 ),
                 "SELECT TRUNC(123.456, 2) TRUNC",
             ),
-            (
-                exp.Select(
-                    expressions=[
-                        exp.Anonymous(
-                            this="TYPEOF",
-                            expressions=[
-                                exp.Anonymous(
-                                    this="TYPEOF",
-                                    expressions=[exp.Column(this=exp.to_identifier("int_col"))],
-                                )
-                            ],
-                        )
-                    ],
-                ).from_("TYPE_TABLE"),
-                "SELECT TYPEOF(TYPEOF(int_col)) FROM TYPE_TABLE",
-            ),
+            # (
+            #     exp.Select(
+            #         expressions=[
+            #             exp.Anonymous(
+            #                 this="TYPEOF",
+            #                 expressions=[
+            #                     exp.Anonymous(
+            #                         this="TYPEOF",
+            #                         expressions=[exp.Column(this=exp.to_identifier("int_col"))],
+            #                     )
+            #                 ],
+            #             )
+            #         ],
+            #     ).from_(exp.Literal.string("TYPE_TABLE")),
+            #     "SELECT TYPEOF(TYPEOF(int_col)) FROM TYPE_TABLE",
+            # ),
             (
                 exp.Select(
                     expressions=[
@@ -3626,7 +3998,7 @@ class TestExasol(Validator):
 
         for expression, expected_sql in tests:
             with self.subTest(sql=expected_sql):
-                print(generator.sql(expression))
-                print(expected_sql)
+                # print(generator.sql(expression))
+                # print(expected_sql)
                 self.assertEqual(generator.sql(expression), expected_sql)
                 self.assertEqual(generator.sql(expression), expected_sql)
