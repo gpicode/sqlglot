@@ -812,14 +812,6 @@ class Exasol(Dialect):
                 )
             return expression
 
-        def ordered_sql(self, expression):
-            """
-            Custom ORDERED SQL generation that wraps 'date' columns with TO_DATE.
-            """
-            expression = expression.copy()
-            expression.set("this", self.wrap_to_date_if_date_col(expression.this))
-            return super().ordered_sql(expression)
-
         def lt_sql(self, expression):
             expression = expression.copy()
             expression.set("this", self.wrap_to_date_if_date_col(expression.this))
@@ -1206,7 +1198,6 @@ class Exasol(Dialect):
             if isinstance(arg, exp.Literal) and arg.args.get("prefix"):
                 return f"{arg.args['prefix']} '{arg.this}'"
             return self.sql(e, key)
-
 
         def alias_sql(self, expression: exp.Alias) -> str:
             alias = self.sql(expression, "alias")
