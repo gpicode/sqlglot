@@ -480,7 +480,7 @@ class Exasol(Dialect):
 
         def _handle_interval_day_or_year(
             self, this: t.Optional[exp.Expression]
-        ) -> exp.DataType:
+        ) -> t.Optional[exp.DataType]:
             """
             INTERVAL DAY(lfp) TO SECOND(fsp)
             lfp = leading field precision (optional) 1 <= lfp <= 9, default = 2
@@ -490,23 +490,20 @@ class Exasol(Dialect):
             p = leading field precision (optional) 1 <= p <= 9, default = 2
             """
             if not (
-                this
-                and isinstance(this, exp.DataType)
-                and isinstance(this.this, exp.Interval)
+                this and isinstance(this, exp.DataType) and isinstance(this.this, exp.Interval)
             ):
-                return this
+                return None
+
             interval = this.this
+            unit = None
+
             if isinstance(interval.unit, exp.Var) and (
                 interval.unit.this == "DAY" or interval.unit.this == "YEAR"
             ):
                 unit = interval.unit.this
-                # if parser does not match `TO`, it returns DataType(Interval(Var(DAY | YEAR))) - parser.py line 5263
-                # this is the case when parser wants to match `TO` but needs to handle `(`
 
                 is_match = self._match_lfp_or_fsp()  # handle DAY(lfp) or YEAR(p)
                 if is_match and self._match_text_seq("TO"):
-                    # parser can work like _parser_types line 5263
-                    # i.e. parse SECOND or MONTH
                     interval_unit = exp.IntervalSpan(
                         this=self.expression(exp.Var, this=unit),
                         expression=self._parse_var(upper=True),
@@ -517,18 +514,15 @@ class Exasol(Dialect):
                     )
                     if unit == "DAY":
                         self._match_lfp_or_fsp()  # handle SECOND(fsp)
+
                 if not is_match:
-                    # there is no `TO`
-                    # or there is no `TO` and no `(`
-                    # but exasol requires `TO` -> Syntax Error
-                    self.raise_error(
-                        f"Expected `TO` to follow `{unit}` in `INTERVAL` type"
-                    )
+                    self.raise_error(f"Expected `TO` to follow `{unit}` in `INTERVAL` type")
+
             elif isinstance(interval.unit, exp.IntervalSpan):
-                # handle case: DAY TO SECOND(fsp)
                 self._match_lfp_or_fsp()
             else:
-                self.raise_error(f"Expected `{unit}` to follow `INTERVAL` type")
+                unit_display = unit if unit is not None else "<unknown>"
+                self.raise_error(f"Expected `{unit_display}` to follow `INTERVAL` type")
 
             return this
 
@@ -1217,8 +1211,14 @@ class Exasol(Dialect):
                 return f"{arg.args['prefix']} '{arg.this}'"
             return self.sql(e, key)
 
+        # def alias_sql(self, expression):
+        #     return f"{self.sql(expression, 'this')} {self.sql(expression, 'alias')}"
         def alias_sql(self, expression):
-            return f"{self.sql(expression, 'this')} {self.sql(expression, 'alias')}"
+            alias = expression.args.get("alias")
+            if alias:
+                alias_str = alias if isinstance(alias, exp.Identifier) else self.sql(alias)
+                return f"{self.sql(expression, 'this')} {alias_str}"
+            return self.sql(expression, "this")
 
         def windowed_func(self, name, e):
             sql = f"{name}({self.sql(e, 'this')})"
