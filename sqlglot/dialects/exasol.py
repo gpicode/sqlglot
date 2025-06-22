@@ -20,26 +20,23 @@ if TYPE_CHECKING:
 
 
 def _str_to_time_sql(self: Exasol.Generator, expression: exp.StrToTime) -> str:
+    """
+    Handles TO_TIMESTAMP(expr[, format]) translation for Exasol.
+    - If a format is provided, normalize and use it.
+    - If no format is provided, fall back to default TIMESTAMP cast.
+    """
     this_expr = expression.args.get("this") or (
         expression.expressions[0] if expression.expressions else None
     )
 
     this = self.sql(this_expr) if this_expr else "NULL"
     fmt_expr = expression.args.get("format")
-    fmt_str = (
-        self._normalize_date_format(fmt_expr.this)
-        if fmt_expr and hasattr(fmt_expr, "this")
-        else None
-    )
 
-    if getattr(this_expr, "name", "").lower() == "date" and fmt_str:
-        result = f"TO_DATE({this}, '{fmt_str}')"
-    elif fmt_str:
-        result = f"TO_TIMESTAMP({this}, '{fmt_str}')"
-    else:
-        result = f"CAST({this} AS TIMESTAMP)"
+    if fmt_expr and hasattr(fmt_expr, "this"):
+        fmt_str = self._normalize_date_format(fmt_expr.this)
+        return f"TO_TIMESTAMP({this}, '{fmt_str}')"
 
-    return result
+    return f"CAST({this} AS TIMESTAMP)"
 
 
 def _str_to_date_sql(self: Exasol.Generator, expression: exp.StrToDate) -> str:
@@ -513,6 +510,9 @@ class Exasol(Dialect):
                 "TO_CHAR", e.this, self.format_time_to_string(e)
             ),
             exp.TsOrDsToDate: lambda self, e: self.sql(
+                exp.StrToDate(this=e.this, format=e.args.get("format"))
+            ),
+            exp.TsOrDsToDatetime: lambda self, e: self.sql(
                 exp.StrToTime(this=e.this, format=e.args.get("format"))
             ),
             exp.ToNumber: lambda self, e: self.tonumber_sql(e),
