@@ -1895,7 +1895,7 @@ class Parser(metaclass=_Parser):
             stmt.add_comments(comments, prepend=True)
             return stmt
 
-        if self._match_set(self.dialect.tokenizer.COMMANDS):
+        if self._match_set(self.dialect.tokenizer_class.COMMANDS):
             return self._parse_command()
 
         expression = self._parse_expression()
@@ -2237,6 +2237,7 @@ class Parser(metaclass=_Parser):
                 if input_format or output_format
                 else self._parse_var_or_string() or self._parse_number() or self._parse_id_var()
             ),
+            hive_format=True,
         )
 
     def _parse_unquoted_field(self) -> t.Optional[exp.Expression]:
@@ -3394,8 +3395,12 @@ class Parser(metaclass=_Parser):
             comments=comments,
         )
 
-        if isinstance(cte.this, exp.Values):
-            cte.set("this", exp.select("*").from_(exp.alias_(cte.this, "_values", table=True)))
+        values = cte.this
+        if isinstance(values, exp.Values):
+            if values.alias:
+                cte.set("this", exp.select("*").from_(values))
+            else:
+                cte.set("this", exp.select("*").from_(exp.alias_(values, "_values", table=True)))
 
         return cte
 

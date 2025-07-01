@@ -2856,8 +2856,9 @@ class FallbackProperty(Property):
     arg_types = {"no": True, "protection": False}
 
 
+# https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-create-table-hiveformat
 class FileFormatProperty(Property):
-    arg_types = {"this": False, "expressions": False}
+    arg_types = {"this": False, "expressions": False, "hive_format": False}
 
 
 class CredentialsProperty(Property):
@@ -5370,6 +5371,10 @@ class Func(Condition):
         return {name: cls.from_arg_list for name in cls.sql_names()}
 
 
+class Typeof(Func):
+    pass
+
+
 class AggFunc(Func):
     pass
 
@@ -5579,6 +5584,10 @@ class ArrayLast(Func):
 
 class ArrayReverse(Func):
     pass
+
+
+class ArraySlice(Func):
+    arg_types = {"this": True, "start": True, "end": False, "step": False}
 
 
 class ArrayToString(Func):

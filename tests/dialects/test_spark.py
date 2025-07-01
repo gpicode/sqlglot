@@ -69,11 +69,11 @@ class TestSpark(Validator):
                 "trino": "CREATE TABLE test WITH (format='PARQUET') AS SELECT 1",
                 "athena": "CREATE TABLE test WITH (format='PARQUET') AS SELECT 1",  # note: lowercase format property is important for Athena
                 "hive": "CREATE TABLE test STORED AS PARQUET AS SELECT 1",
-                "spark": "CREATE TABLE test USING PARQUET AS SELECT 1",
+                "spark": "CREATE TABLE test STORED AS PARQUET AS SELECT 1",
             },
         )
         self.validate_all(
-            """CREATE TABLE blah (col_a INT) COMMENT "Test comment: blah" PARTITIONED BY (date STRING) STORED AS ICEBERG TBLPROPERTIES('x' = '1')""",
+            """CREATE TABLE blah (col_a INT) COMMENT "Test comment: blah" PARTITIONED BY (date STRING) USING ICEBERG TBLPROPERTIES('x' = '1')""",
             write={
                 "duckdb": """CREATE TABLE blah (
   col_a INT
@@ -926,9 +926,32 @@ TBLPROPERTIES (
             },
         )
         self.validate_all(
+            "SELECT POSEXPLODE(ARRAY('a'))",
+            write={
+                "duckdb": "SELECT GENERATE_SUBSCRIPTS(['a'], 1) - 1 AS pos, UNNEST(['a']) AS col",
+                "spark": "SELECT POSEXPLODE(ARRAY('a'))",
+            },
+        )
+        self.validate_all(
             "SELECT POSEXPLODE(x) AS (a, b)",
             write={
                 "presto": "SELECT IF(_u.pos = _u_2.a, _u_2.b) AS b, IF(_u.pos = _u_2.a, _u_2.a) AS a FROM UNNEST(SEQUENCE(1, GREATEST(CARDINALITY(x)))) AS _u(pos) CROSS JOIN UNNEST(x) WITH ORDINALITY AS _u_2(b, a) WHERE _u.pos = _u_2.a OR (_u.pos > CARDINALITY(x) AND _u_2.a = CARDINALITY(x))",
+                "duckdb": "SELECT GENERATE_SUBSCRIPTS(x, 1) - 1 AS a, UNNEST(x) AS b",
+                "spark": "SELECT POSEXPLODE(x) AS (a, b)",
+            },
+        )
+        self.validate_all(
+            "SELECT * FROM POSEXPLODE(ARRAY('a'))",
+            write={
+                "duckdb": "SELECT * FROM (SELECT GENERATE_SUBSCRIPTS(['a'], 1) - 1 AS pos, UNNEST(['a']) AS col)",
+                "spark": "SELECT * FROM POSEXPLODE(ARRAY('a'))",
+            },
+        )
+        self.validate_all(
+            "SELECT * FROM POSEXPLODE(ARRAY('a')) AS (a, b)",
+            write={
+                "duckdb": "SELECT * FROM (SELECT GENERATE_SUBSCRIPTS(['a'], 1) - 1 AS a, UNNEST(['a']) AS b)",
+                "spark": "SELECT * FROM POSEXPLODE(ARRAY('a')) AS _t0(a, b)",
             },
         )
         self.validate_all(
