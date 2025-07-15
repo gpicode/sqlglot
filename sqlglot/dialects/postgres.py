@@ -363,6 +363,7 @@ class Postgres(Dialect):
             "REGROLE": TokenType.OBJECT_IDENTIFIER,
             "REGTYPE": TokenType.OBJECT_IDENTIFIER,
             "FLOAT": TokenType.DOUBLE,
+            "XML": TokenType.XML,
         }
         KEYWORDS.pop("/*+")
         KEYWORDS.pop("DIV")
@@ -383,7 +384,6 @@ class Postgres(Dialect):
 
         FUNCTIONS = {
             **parser.Parser.FUNCTIONS,
-            "ASCII": exp.Unicode.from_arg_list,
             "DATE_TRUNC": build_timestamp_trunc,
             "DIV": lambda args: exp.cast(
                 binary_from_function(exp.IntDiv)(args), exp.DataType.Type.DECIMAL

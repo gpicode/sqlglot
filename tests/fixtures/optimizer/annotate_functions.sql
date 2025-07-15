@@ -85,6 +85,12 @@ BOOLEAN;
 ENDS_WITH(tbl.str_col, suffix);
 BOOLEAN;
 
+ASCII('A');
+INT;
+
+UNICODE('bcd');
+INT;
+
 --------------------------------------
 -- Spark2 / Spark3 / Databricks
 --------------------------------------
@@ -591,6 +597,14 @@ DOUBLE;
 
 # dialect: bigquery
 LAG(tbl.bigint_col, 1 , 2) OVER (ORDER BY tbl.bigint_col);
+BIGINT;
+
+# dialect: bigquery
+ASCII('A');
+BIGINT;
+
+# dialect: bigquery
+UNICODE('bcd');
 BIGINT;
 
 --------------------------------------
